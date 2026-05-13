@@ -15,10 +15,23 @@ use settings::{
 use warpui::{AppContext, SingletonEntity};
 
 use crate::rag::embed::{DEFAULT_EMBED_MODEL, DEFAULT_OLLAMA_BASE_URL};
+use crate::vault::config::{
+    DEFAULT_MIRROR_MAX_DEPTH, DEFAULT_MIRROR_SOURCE_REL_PATH, DEFAULT_VAULT_REL_PATH,
+};
 
 /// Default chat model. `gemma3` is bundled with Ollama via `ollama pull gemma3`.
 /// Users override via the model picker or by editing `settings.toml`.
 pub const DEFAULT_CHAT_MODEL: &str = "gemma3";
+
+/// Default vault path setting value. We store it as `~/...` so the user
+/// editing `settings.toml` sees a portable string, then expand at load time.
+fn default_vault_path() -> String {
+    format!("~/{DEFAULT_VAULT_REL_PATH}")
+}
+
+fn default_mirror_source_root() -> String {
+    format!("~/{DEFAULT_MIRROR_SOURCE_REL_PATH}")
+}
 
 define_settings_group!(UnwarpSettings,
     settings: [
@@ -49,6 +62,33 @@ define_settings_group!(UnwarpSettings,
             toml_path: "unwarp.llm.embed_base_url",
             description: "Base URL of the embedding provider. Must end with `/`. Default is local Ollama.",
         },
+        vault_path: UnwarpVaultPath {
+            type: String,
+            default: default_vault_path(),
+            supported_platforms: SupportedPlatforms::ALL,
+            sync_to_cloud: SyncToCloud::Never,
+            private: false,
+            toml_path: "unwarp.vault.path",
+            description: "Absolute path to the unwarp vault directory. `~` is expanded against the home directory.",
+        },
+        mirror_source_root: UnwarpMirrorSourceRoot {
+            type: String,
+            default: default_mirror_source_root(),
+            supported_platforms: SupportedPlatforms::ALL,
+            sync_to_cloud: SyncToCloud::Never,
+            private: false,
+            toml_path: "unwarp.vault.mirror_source_root",
+            description: "Directory the mirror job scans for project README/AGENTS/CLAUDE files.",
+        },
+        mirror_max_depth: UnwarpMirrorMaxDepth {
+            type: i64,
+            default: DEFAULT_MIRROR_MAX_DEPTH as i64,
+            supported_platforms: SupportedPlatforms::ALL,
+            sync_to_cloud: SyncToCloud::Never,
+            private: false,
+            toml_path: "unwarp.vault.mirror_max_depth",
+            description: "Maximum directory depth (from mirror_source_root) the mirror job recurses to.",
+        },
     ]
 );
 
@@ -64,6 +104,33 @@ impl UnwarpSettings {
             model: settings.default_embed_model.value().to_owned(),
             api_key: None,
         }
+    }
+
+    /// Build a [`VaultConfig`](crate::vault::VaultConfig) from the current
+    /// setting values. Returns `Err` only if a user-supplied path is
+    /// malformed; default settings always resolve.
+    ///
+    /// `home_dir` is passed in (rather than fetched from `dirs::home_dir()`)
+    /// so callers can override it for tests or sandboxed environments.
+    pub fn vault_config(
+        ctx: &AppContext,
+        home_dir: &std::path::Path,
+    ) -> Result<crate::vault::VaultConfig, crate::vault::VaultConfigError> {
+        let settings = Self::as_ref(ctx);
+        let depth_raw = *settings.mirror_max_depth.value();
+        // Clamp to u8 range; settings store as i64 because the macro doesn't
+        // support u8 directly. Negative or huge values fall back to default.
+        let depth = if (0..=255).contains(&depth_raw) {
+            depth_raw as u8
+        } else {
+            DEFAULT_MIRROR_MAX_DEPTH
+        };
+        crate::vault::VaultConfig::from_raw(
+            home_dir,
+            settings.vault_path.value(),
+            settings.mirror_source_root.value(),
+            depth,
+        )
     }
 }
 
@@ -84,5 +151,13 @@ mod tests {
         // Sanity check: defaults should be model names that `ollama pull` recognizes.
         assert_eq!(DEFAULT_CHAT_MODEL, "gemma3");
         assert_eq!(DEFAULT_EMBED_MODEL, "nomic-embed-text");
+    }
+
+    #[test]
+    fn default_vault_path_uses_tilde() {
+        // Stored as `~/Documents/...` so the user reading settings.toml sees a
+        // portable string. Expansion happens in vault::config::from_raw.
+        assert!(default_vault_path().starts_with('~'));
+        assert!(default_mirror_source_root().starts_with('~'));
     }
 }
