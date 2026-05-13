@@ -68,6 +68,8 @@ mod ollama_panel;
 mod quit_warning;
 mod rag;
 #[allow(dead_code)]
+mod vault;
+#[allow(dead_code)]
 mod remote_server;
 mod resource_limits;
 mod safe_triangle;
@@ -1045,6 +1047,11 @@ fn initialize_app(
 
     ensure_warp_watch_roots_exist();
     ctx.add_singleton_model(WarpManagedPathsWatcher::new);
+
+    // unwarp Phase 2: vault manager singleton. Constructed in Uninitialized
+    // state; the workspace first-run flow drives `initialize` once settings
+    // are available (see workspace startup).
+    ctx.add_singleton_model(crate::vault::VaultManager::new);
 
     ctx.add_singleton_model(WarpConfig::new);
     ctx.add_singleton_model(|_ctx| SettingsManager::default());
