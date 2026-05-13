@@ -15,6 +15,7 @@
 //!
 //! Phase 3 will hook the vault file watcher into the RAG indexer.
 
+pub mod brew;
 pub mod config;
 pub mod layout;
 pub mod lock;
