@@ -4,20 +4,20 @@ Version=1.0
 
 Type=Application
 
-Name=OpenWarp
+Name=unwarp
 GenericName=TerminalEmulator
 
-Exec=warp-terminal-oss %U
-StartupWMClass=dev.warp.OpenWarp
+Exec=unwarp %U
+StartupWMClass=dev.unwarp.unwarp
 
 Keywords=shell;prompt;command;commandline;cmd;
 
-Icon=dev.warp.OpenWarp
+Icon=dev.unwarp.unwarp
 
 Categories=System;TerminalEmulator;
 
 # Don't run this application within a terminal.
 Terminal=false
 
-# Register ourselves as the handler for openwarp:// URLs.
-MimeType=x-scheme-handler/openwarp;
+# Register ourselves as the handler for unwarp:// URLs.
+MimeType=x-scheme-handler/unwarp;

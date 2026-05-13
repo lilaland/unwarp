@@ -139,15 +139,15 @@ fn test_project_path_for_warp_dev_app_id() {
 
 #[test]
 fn test_project_path_for_oss_app_id() {
-    let project_dirs = project_dirs_for_app_id(AppId::new("dev", "openwarp", "OpenWarp"), None)
+    let project_dirs = project_dirs_for_app_id(AppId::new("dev", "unwarp", "unwarp"), None)
         .expect("should be able to compute project dirs");
     cfg_if::cfg_if! {
         if #[cfg(target_os = "macos")] {
-            assert_eq!(project_dirs.project_path(), "dev.openwarp.OpenWarp");
+            assert_eq!(project_dirs.project_path(), "dev.unwarp.unwarp");
         } else if #[cfg(any(target_os = "linux", target_os = "freebsd"))] {
-            assert_eq!(project_dirs.project_path(), "openwarp");
+            assert_eq!(project_dirs.project_path(), "unwarp");
         } else if #[cfg(windows)] {
-            assert_eq!(project_dirs.project_path(), "openwarp\\OpenWarp");
+            assert_eq!(project_dirs.project_path(), "unwarp\\unwarp");
         } else {
             unimplemented!("Need to update tests for current platform!");
         }

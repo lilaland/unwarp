@@ -18348,9 +18348,15 @@ impl Workspace {
                 entry_focus: GlobalSearchEntryFocus::Results,
             });
         }
-        if WarpDriveSettings::is_warp_drive_enabled(ctx) {
-            views.push(ToolPanelView::WarpDrive);
-        }
+        // unwarp Phase 0: Drive panel hidden from UI. The backend is dead
+        // (sentinel URL routes nowhere) and the panel slot is reserved for
+        // VaultPanel (TDD §5.5). The drive module itself stays compiled
+        // until Phase 2 builds VaultPanel; deleting it now would cascade
+        // through workspace/view.rs, cloud_object/, and ~19 other files.
+        // Original (pre-rebrand):
+        //     if WarpDriveSettings::is_warp_drive_enabled(ctx) {
+        //         views.push(ToolPanelView::WarpDrive);
+        //     }
         // openWarp 独有:SSH 管理器,无 feature flag,默认始终显示。
         views.push(ToolPanelView::SshManager);
         // openWarp 独有:Skill 管理器,无 feature flag,local_fs 构建下默认显示。
