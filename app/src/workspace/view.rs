@@ -1,14 +1,15 @@
+mod build_plan_migration_modal;
 pub(crate) mod codex_modal;
 pub mod conversation_list;
 #[cfg(enable_crash_recovery)]
 mod crash_recovery;
+pub(crate) mod free_tier_limit_hit_modal;
 pub mod global_search;
 pub(crate) mod launch_modal;
 pub(crate) mod left_panel;
 pub(crate) mod onboarding;
-pub(crate) mod zap_launch_modal;
+pub(crate) mod openwarp_launch_modal;
 pub(crate) mod right_panel;
-pub(crate) mod server_file_browser;
 mod startup_directory;
 #[cfg(test)]
 #[path = "view_test.rs"]
@@ -39,6 +40,7 @@ use crate::ai::blocklist::suggested_rule_modal::{
 use crate::ai::conversation_utils;
 use crate::ai::document::ai_document_model::{AIDocumentId, AIDocumentModel};
 use crate::ai::llms::LLMPreferences;
+use crate::ai::AIRequestUsageModel;
 use crate::ai::{
     agent::{api::ServerConversationToken, conversation::AIConversationId, EntrypointType},
     blocklist::{
@@ -102,17 +104,24 @@ use crate::ai::blocklist::FORK_PREFIX;
 #[cfg(not(target_family = "wasm"))]
 use crate::terminal::cli_agent_sessions::plugin_manager::{plugin_manager_for, PluginModalKind};
 use crate::terminal::cli_agent_sessions::{CLIAgentSessionsModel, CLIAgentSessionsModelEvent};
-use crate::terminal::CLIAgent;
 use crate::workspace::header_toolbar_editor::{HeaderToolbarEditorEvent, HeaderToolbarEditorModal};
 use crate::workspace::header_toolbar_item::HeaderToolbarItemKind;
 use crate::workspace::tab_settings::TabCloseButtonPosition;
+use crate::workspace::view::build_plan_migration_modal::{
+    BuildPlanMigrationModal, BuildPlanMigrationModalEvent,
+};
 use crate::workspace::view::codex_modal::{CodexModal, CodexModalEvent};
-use crate::workspace::view::zap_launch_modal::{
-    ZapLaunchModal, ZapLaunchModalEvent,
+use crate::workspace::view::free_tier_limit_hit_modal::{
+    FreeTierLimitHitModal, FreeTierLimitHitModalEvent,
+};
+use crate::workspace::view::openwarp_launch_modal::{
+    OpenWarpLaunchModal, OpenWarpLaunchModalEvent,
 };
 use crate::workspace::{ForkFromExchange, ForkedConversationDestination};
 use crate::BlocklistAIHistoryModel;
 
+#[cfg(all(target_os = "macos", feature = "crash_reporting"))]
+use sentry::protocol::{Attachment, AttachmentType};
 use serde_json;
 use warpui::notification::NotificationSendError;
 
@@ -129,7 +138,7 @@ use crate::auth::{AuthManager, AuthManagerEvent};
 use crate::auth::{
     AuthOverrideWarningModal, AuthOverrideWarningModalEvent, AuthOverrideWarningModalVariant,
 };
-use crate::auth::{AuthView, AuthViewEvent, AuthViewVariant};
+use crate::auth::{AuthRedirectPayload, AuthView, AuthViewEvent, AuthViewVariant};
 #[cfg(feature = "local_fs")]
 use crate::code::editor_management::CodeManager;
 use crate::code::editor_management::CodeSource;
@@ -144,12 +153,12 @@ use crate::pane_group::{
 use crate::quit_warning::UnsavedStateSummary;
 use crate::search::command_palette::view::NavigationMode;
 use crate::search::slash_command_menu::static_commands::commands;
-// Zap Wave 3-1:`AuthClient` trait 随 server_api/auth.rs 一同物理删。
+// OpenWarp Wave 3-1:`AuthClient` trait 随 server_api/auth.rs 一同物理删。
 use crate::settings::{
     AISettings, AISettingsChangedEvent, CodeSettings, CodeSettingsChangedEvent, CtrlTabBehavior,
     DefaultSessionMode, InputModeSettings,
 };
-// Zap Wave 7-3:`environments_page::EnvironmentsPage` import 随 ambient-agent UI
+// OpenWarp Wave 7-3:`environments_page::EnvironmentsPage` import 随 Cloud Mode UI
 // 子系统物理删。
 use crate::settings_view::pane_manager::SettingsPaneManager;
 use crate::settings_view::{SettingsSection, SettingsView, SettingsViewEvent};
@@ -176,7 +185,7 @@ use repo_metadata::RemoteRepositoryIdentifier;
 #[cfg(target_family = "wasm")]
 use url::Url;
 
-// Zap:删除 SharedObjectsCreationDeniedModal(云端 Drive 配额拒绝弹窗)
+// OpenWarp:删除 SharedObjectsCreationDeniedModal(云端 Drive 配额拒绝弹窗)
 
 #[cfg(target_family = "wasm")]
 use crate::wasm_nux_dialog::WasmNUXDialog;
@@ -206,7 +215,7 @@ use crate::drive::import::modal::{ImportModal, ImportModalEvent};
 use crate::drive::workflows::arguments::ArgumentsState;
 use crate::drive::workflows::modal::{WorkflowModal, WorkflowModalEvent};
 use crate::drive::{
-    DriveObjectType, DrivePanel, DrivePanelEvent, ObjectTypeAndId, ZapDriveObjectSettings,
+    DriveObjectType, DrivePanel, DrivePanelEvent, ObjectTypeAndId, OpenWarpDriveObjectSettings,
 };
 use crate::experiments::{BlockOnboarding, Experiment};
 use crate::menu::{
@@ -245,11 +254,11 @@ use crate::search::command_search::searcher::{
     AcceptedHistoryItem, AcceptedWorkflow, CommandSearchItemAction,
 };
 use crate::search::command_search::view::{CommandSearchEvent, CommandSearchView};
-use crate::server::ids::{ObjectUid, SyncId};
+use crate::server::ids::{ObjectUid, ServerId, SyncId};
 use crate::server::telemetry::{
-    AddTabWithShellSource, CloseTarget, EnvVarTelemetryMetadata, FileTreeSource,
-    KnowledgePaneEntrypoint, LaunchConfigUiLocation, MCPServerCollectionPaneEntrypoint,
-    OpenedWarpAISource, WarpDriveSource,
+    AddTabWithShellSource, AnonymousUserSignupEntrypoint, CloseTarget, EnvVarTelemetryMetadata,
+    FileTreeSource, KnowledgePaneEntrypoint, LaunchConfigUiLocation,
+    MCPServerCollectionPaneEntrypoint, OpenedWarpAISource, WarpDriveSource,
 };
 use crate::server_time::ServerTime;
 use crate::session_management::{SessionNavigationData, SessionSource};
@@ -351,7 +360,6 @@ use std::time::Duration;
 #[cfg(target_os = "macos")]
 use std::time::{SystemTime, UNIX_EPOCH};
 use warp_core::context_flag::ContextFlag;
-use warp_core::HostId;
 use warp_core::semantic_selection::SemanticSelection;
 use warp_util::path::{user_friendly_path, LineAndColumnArg};
 use warpui::fonts::Weight;
@@ -365,7 +373,7 @@ use warpui::elements::{
     CacheOption, DispatchEventResult, DraggableState, DropTarget, EventHandler, Image,
     MouseInBehavior, Rect,
 };
-use warpui::ui_components::button::Button;
+use warpui::ui_components::button::{Button, ButtonVariant};
 use warpui::windowing::{StateEvent, WindowManager};
 use warpui::{elements::MouseStateHandle, fonts::Properties};
 
@@ -492,7 +500,7 @@ const MAX_FONT_SIZE: f32 = 25.0;
 const FONT_SIZE_INCREMENT: f32 = 1.0;
 
 pub const TAB_BAR_HEIGHT: f32 = 34.;
-/// Height for all panel headers (tab bar, zap drive, resource center, theme chooser, etc.).
+/// Height for all panel headers (tab bar, warp drive, resource center, theme chooser, etc.).
 /// This ensures consistent header heights across all UI panels.
 pub const PANEL_HEADER_HEIGHT: f32 = TAB_BAR_HEIGHT;
 /// The hover area height for states where the tab bar is revealed on hover.
@@ -509,8 +517,8 @@ const TAB_BAR_ICON_PADDING: f32 = 4.;
 
 const TAB_BAR_PILL_WIDTH: f32 = 100.;
 const PILL_FONT_SIZE: f32 = 12.;
-// We use the word "Zap" in the Update Ready button to make it obvious that the terminal is Zap.
-// This can lead to free advertising when users screen-share Zap when an update is available.
+// We use the word "Warp" in the Update Ready button to make it obvious that the terminal is Warp.
+// This can lead to free advertising when users screen-share Warp when an update is available.
 const TAB_BAR_OVERFLOW_MENU_WIDTH: f32 = 300.;
 
 #[cfg(not(target_family = "wasm"))]
@@ -714,7 +722,7 @@ impl ShowTabBar {
 #[cfg(target_family = "wasm")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SimplifiedWasmTabBarContent {
-    /// Viewing a Zap Drive object (notebook, workflow, env vars, AI facts, MCP servers)
+    /// Viewing a Warp Drive object (notebook, workflow, env vars, AI facts, MCP servers)
     WarpDriveObject,
     /// Participating in a shared session (viewer or writer). Contains the optional ambient agent task ID.
     SharedSession { task_id: Option<AmbientAgentTaskId> },
@@ -926,8 +934,11 @@ pub struct Workspace {
     theme_deletion_modal: ViewHandle<ThemeDeletionModal>,
     suggested_agent_mode_workflow_modal: ViewHandle<SuggestedAgentModeWorkflowModal>,
     suggested_rule_modal: ViewHandle<SuggestedRuleModal>,
-    zap_launch_modal: ViewHandle<ZapLaunchModal>,
+    openwarp_launch_modal: ViewHandle<OpenWarpLaunchModal>,
+    build_plan_migration_modal: ViewHandle<BuildPlanMigrationModal>,
     codex_modal: ViewHandle<CodexModal>,
+    free_tier_limit_hit_modal: ViewHandle<FreeTierLimitHitModal>,
+    free_tier_limit_check_triggered: bool,
     toast_stack: ViewHandle<DismissibleToastStack<WorkspaceAction>>,
     agent_toast_stack: ViewHandle<AgentToastStack>,
     update_toast_stack: ViewHandle<DismissibleToastStack<WorkspaceAction>>,
@@ -953,6 +964,8 @@ pub struct Workspace {
     wasm_nux_dialog: ViewHandle<WasmNUXDialog>,
     #[cfg(target_family = "wasm")]
     open_in_warp_button: ViewHandle<ActionButton>,
+    #[cfg(target_family = "wasm")]
+    view_cloud_runs_button: ViewHandle<ActionButton>,
     #[cfg(target_family = "wasm")]
     transcript_info_button: ViewHandle<ActionButton>,
     #[cfg(target_family = "wasm")]
@@ -1339,12 +1352,12 @@ impl Workspace {
                 if let Some(id) = id_to_force_expand {
                     self.open_notebook(
                         &NotebookSource::Existing(id),
-                        &ZapDriveObjectSettings::default(),
+                        &OpenWarpDriveObjectSettings::default(),
                         ctx,
                         true,
                     );
-                    ObjectStoreModel::handle(ctx).update(ctx, |object_store_model, ctx| {
-                        object_store_model.force_expand_object_and_ancestors(id, ctx);
+                    ObjectStoreModel::handle(ctx).update(ctx, |cloud_model, ctx| {
+                        cloud_model.force_expand_object_and_ancestors(id, ctx);
                     });
                 }
 
@@ -1356,11 +1369,11 @@ impl Workspace {
                 if let Some(id) = id_to_force_expand {
                     self.open_workflow_with_existing(
                         id,
-                        &ZapDriveObjectSettings::default(),
+                        &OpenWarpDriveObjectSettings::default(),
                         ctx,
                     );
-                    ObjectStoreModel::handle(ctx).update(ctx, |object_store_model, ctx| {
-                        object_store_model.force_expand_object_and_ancestors(id, ctx);
+                    ObjectStoreModel::handle(ctx).update(ctx, |cloud_model, ctx| {
+                        cloud_model.force_expand_object_and_ancestors(id, ctx);
                     });
                 }
 
@@ -1369,8 +1382,8 @@ impl Workspace {
                     id_to_force_expand = Some(folder.id);
                 }
                 if let Some(id) = id_to_force_expand {
-                    ObjectStoreModel::handle(ctx).update(ctx, |object_store_model, ctx| {
-                        object_store_model.force_expand_object_and_ancestors(id, ctx);
+                    ObjectStoreModel::handle(ctx).update(ctx, |cloud_model, ctx| {
+                        cloud_model.force_expand_object_and_ancestors(id, ctx);
                     });
                 }
 
@@ -2496,9 +2509,19 @@ impl Workspace {
         let resource_center_view =
             Self::build_resource_center_view(ctx, tips_completed.clone(), changelog_model.clone());
 
+        let build_plan_migration_modal = ctx.add_typed_action_view(BuildPlanMigrationModal::new);
+        ctx.subscribe_to_view(&build_plan_migration_modal, |me, _, event, ctx| {
+            me.handle_build_plan_migration_modal_event(event, ctx);
+        });
+
         let codex_modal = ctx.add_typed_action_view(CodexModal::new);
         ctx.subscribe_to_view(&codex_modal, |me, _, event, ctx| {
             me.handle_codex_modal_event(event, ctx);
+        });
+
+        let free_tier_limit_hit_modal = ctx.add_typed_action_view(FreeTierLimitHitModal::new);
+        ctx.subscribe_to_view(&free_tier_limit_hit_modal, |me, _, event, ctx| {
+            me.handle_free_tier_limit_modal_event(event, ctx);
         });
 
         let require_login_modal = Self::build_require_login_modal(ctx);
@@ -2516,9 +2539,9 @@ impl Workspace {
 
         let suggested_rule_modal = Self::build_suggested_rule_modal(ctx);
 
-        let zap_launch_view = ctx.add_typed_action_view(ZapLaunchModal::new);
-        ctx.subscribe_to_view(&zap_launch_view, |me, _, event, ctx| {
-            me.handle_zap_launch_modal_event(event, ctx);
+        let openwarp_launch_view = ctx.add_typed_action_view(OpenWarpLaunchModal::new);
+        ctx.subscribe_to_view(&openwarp_launch_view, |me, _, event, ctx| {
+            me.handle_openwarp_launch_modal_event(event, ctx);
         });
 
         let launch_config_save_modal = Self::build_launch_config_save_modal(ctx);
@@ -2620,7 +2643,7 @@ impl Workspace {
             me.handle_window_settings_changed_event(event, ctx);
         });
 
-        // Show the Zap AI warm welcome iff the user hasn't dismissed it nor interacted with Zap AI before.
+        // Show the Warp AI warm welcome iff the user hasn't dismissed it nor interacted with Warp AI before.
         // Also, avoid showing it in integration tests to prevent interaction with other tests.
         let mut should_show_ai_assistant_warm_welcome: bool = !FeatureFlag::AgentMode.is_enabled()
             && AISettings::as_ref(ctx).is_any_ai_enabled(ctx)
@@ -2633,7 +2656,7 @@ impl Workspace {
                 .map(|dismissed: bool| !dismissed)
                 .unwrap_or(true);
 
-        // Don't automatically show the Zap AI welcome during onboarding if the block onboarding flow is being used.
+        // Don't automatically show the Warp AI welcome during onboarding if the block onboarding flow is being used.
         // This way, we can delay the reveal until the end of the onboarding flow so as not to overwhelm the user.
         if matches!(
             BlockOnboarding::get_group(ctx),
@@ -2732,6 +2755,9 @@ impl Workspace {
         let transcript_info_button = Self::build_transcript_info_button(ctx);
 
         #[cfg(target_family = "wasm")]
+        let view_cloud_runs_button = Self::build_view_cloud_runs_button(ctx);
+
+        #[cfg(target_family = "wasm")]
         let transcript_details_panel = Self::build_transcript_details_panel(ctx);
 
         // Subscribe to task updates so the transcript details panel can refresh when task data arrives
@@ -2785,7 +2811,7 @@ impl Workspace {
         });
 
         let native_modal = Self::build_native_modal_view(ctx);
-        // Zap:删除 SharedObjectsCreationDeniedModal 注册(云端 Drive 配额拒绝弹窗)
+        // OpenWarp:删除 SharedObjectsCreationDeniedModal 注册(云端 Drive 配额拒绝弹窗)
 
         ctx.subscribe_to_model(&AISettings::handle(ctx), |me, _, event, ctx| match event {
             AISettingsChangedEvent::IsAnyAIEnabled { .. }
@@ -2814,10 +2840,12 @@ impl Workspace {
                 // The model has already determined which window should show the modal.
                 let model_ref = model.as_ref(ctx);
                 if model_ref.target_window_id() == Some(ctx.window_id()) {
-                    if model_ref.is_zap_launch_modal_open() {
-                        me.focus_zap_launch_modal(ctx);
+                    if model_ref.is_openwarp_launch_modal_open() {
+                        me.focus_openwarp_launch_modal(ctx);
                     } else if model_ref.is_hoa_onboarding_open() {
                         me.show_hoa_onboarding_flow(ctx);
+                    } else if model_ref.is_build_plan_migration_modal_open() {
+                        me.focus_build_plan_migration_modal(ctx);
                     }
                 }
             }
@@ -2892,6 +2920,7 @@ impl Workspace {
             auth_override_warning_modal,
             suggested_agent_mode_workflow_modal,
             suggested_rule_modal,
+            build_plan_migration_modal,
             require_login_modal,
             workflow_modal,
             theme_creator_modal,
@@ -2932,11 +2961,14 @@ impl Workspace {
             #[cfg(target_family = "wasm")]
             transcript_info_button,
             #[cfg(target_family = "wasm")]
+            view_cloud_runs_button,
             #[cfg(target_family = "wasm")]
             transcript_details_panel,
             tab_fixed_width: None,
-            zap_launch_modal: zap_launch_view,
+            openwarp_launch_modal: openwarp_launch_view,
             codex_modal,
+            free_tier_limit_hit_modal,
+            free_tier_limit_check_triggered: false,
             lightbox_view: None,
             hoa_onboarding_flow: None,
             hoa_vtabs_callout_pinned_position: None,
@@ -3516,10 +3548,9 @@ impl Workspace {
                 LeftPanelDisplayedTab::GlobalSearch => ToolPanelView::GlobalSearch {
                     entry_focus: GlobalSearchEntryFocus::Results,
                 },
-                LeftPanelDisplayedTab::ZapDrive => ToolPanelView::ZapDrive,
+                LeftPanelDisplayedTab::WarpDrive => ToolPanelView::WarpDrive,
                 LeftPanelDisplayedTab::ConversationListView => ToolPanelView::ConversationListView,
                 LeftPanelDisplayedTab::SshManager => ToolPanelView::SshManager,
-                LeftPanelDisplayedTab::ServerFileBrowser => ToolPanelView::ServerFileBrowser,
                 LeftPanelDisplayedTab::SkillManager => ToolPanelView::SkillManager,
             };
             lp.restore_active_view_from_snapshot(active_view, ctx);
@@ -3586,33 +3617,33 @@ impl Workspace {
             placeholder_pane = Some(home_pane.as_pane().id());
             self.add_tab_from_existing_pane(home_pane, 0, ctx);
 
-            // If we can't start a terminal session to run the onboarding flow, show the Zap Home
-            // placeholder along with Zap Drive.
+            // If we can't start a terminal session to run the onboarding flow, show the Warp Home
+            // placeholder along with Warp Drive.
             true
         };
         let initial_tab = self.active_tab_pane_group().clone();
 
         if open_warp_drive {
-            // We open Zap Drive automatically in two cases:
-            // * The user is new to Zap, and went through the overall onboarding flow
+            // We open Warp Drive automatically in two cases:
+            // * The user is new to Warp, and went through the overall onboarding flow
             // * The user is on the web, so we can't open a terminal session.
             let initial_load_complete =
                 crate::cloud_object::model::persistence::ObjectStoreModel::as_ref(ctx)
                     .initial_load_complete();
             ctx.spawn(initial_load_complete, move |me, _, ctx| {
-                // New Zap users can have non-welcome objects if they were directly invited OR if
+                // New Warp users can have non-welcome objects if they were directly invited OR if
                 // linked objects were copied over from an anonymous user.
                 if ObjectStoreModel::as_ref(ctx).has_non_welcome_objects() {
                     me.open_or_toggle_warp_drive(false, false, ctx);
 
-                    // After opening Zap Drive, if we rendered the Zap Home placeholder panel, replace it with one of
+                    // After opening Warp Drive, if we rendered the Warp Home placeholder panel, replace it with one of
                     // the user's own objects.
                     if show_warp_home {
-                        let object_store_model = ObjectStoreModel::as_ref(ctx);
-                        let candidate_objects = object_store_model
+                        let cloud_model = ObjectStoreModel::as_ref(ctx);
+                        let candidate_objects = cloud_model
                             .cloud_objects()
                             .filter(|object| {
-                                !object.is_trashed(object_store_model)
+                                !object.is_trashed(cloud_model)
                                     && object.renders_in_warp_drive()
                                     && !object.metadata().is_welcome_object
                             })
@@ -3705,7 +3736,7 @@ impl Workspace {
     fn show_local_conversation_not_found_toast(&mut self, ctx: &mut ViewContext<Self>) {
         self.toast_stack.update(ctx, |view, ctx| {
             let new_toast = DismissibleToast::error(
-                "Conversation is not available in local Zap history.".to_string(),
+                "Conversation is not available in local OpenWarp history.".to_string(),
             );
             view.add_ephemeral_toast(new_toast, ctx);
         });
@@ -3765,7 +3796,7 @@ impl Workspace {
             }
         }
 
-        // Check if focused pane is a Zap Drive object
+        // Check if focused pane is a Warp Drive object
         let focused_pane_id = pane_group.focused_pane_id(ctx);
         if focused_pane_id.is_warp_drive_object_pane() {
             return Some(SimplifiedWasmTabBarContent::WarpDriveObject);
@@ -3858,18 +3889,6 @@ impl Workspace {
         });
     }
 
-    /// 新建默认终端标签页，然后执行指定 CLI agent 的启动命令。
-    fn add_tab_with_specific_agent(&mut self, agent: CLIAgent, ctx: &mut ViewContext<Self>) {
-        self.add_terminal_tab(false, ctx);
-        self.active_tab_pane_group().update(ctx, |pane_group, ctx| {
-            if let Some(terminal_view) = pane_group.active_session_view(ctx) {
-                terminal_view.update(ctx, |view, ctx| {
-                    view.execute_command_or_set_pending(agent.command_prefix(), ctx);
-                });
-            }
-        });
-    }
-
     fn toggle_ai_assistant_panel(&mut self, ctx: &mut ViewContext<Self>) {
         // Now that the user has interacted with the panel, we can close
         // the dialogue and mark it as dismissed.
@@ -3887,9 +3906,9 @@ impl Workspace {
         });
 
         // The panel is already open and no models are open, so just refocus the panel.
-        // If there is a modal open, it would sit above the Zap AI panel and we would end up
-        // focusing the Zap AI panel _behind_ the floating modal. Instead, we opt for the normal
-        // toggle behavior which will close the current modal view and then toggle Zap AI.
+        // If there is a modal open, it would sit above the Warp AI panel and we would end up
+        // focusing the Warp AI panel _behind_ the floating modal. Instead, we opt for the normal
+        // toggle behavior which will close the current modal view and then toggle Warp AI.
         if self.current_workspace_state.is_ai_assistant_panel_open
             && !self.ai_assistant_panel.is_self_or_child_focused(ctx)
             && !self.current_workspace_state.is_any_modal_open(ctx)
@@ -3902,7 +3921,7 @@ impl Workspace {
         self.current_workspace_state.is_ai_assistant_panel_open =
             !self.current_workspace_state.is_ai_assistant_panel_open;
 
-        // Close any other modals that could be floating on top of the Zap AI panel.
+        // Close any other modals that could be floating on top of the Warp AI panel.
         self.current_workspace_state.close_all_modals();
 
         if self.current_workspace_state.is_ai_assistant_panel_open {
@@ -3939,8 +3958,8 @@ impl Workspace {
             .has_warp_drive_initialized_sections(app)
     }
 
-    /// Check if Zap Drive view is focused within.
-    /// Routes to the appropriate Zap Drive panel.
+    /// Check if Warp Drive view is focused within.
+    /// Routes to the appropriate Warp Drive panel.
     fn is_warp_drive_view_focused(&self, ctx: &mut ViewContext<Self>) -> bool {
         let app = ctx;
         self.left_panel_view.is_self_or_child_focused(app)
@@ -4142,7 +4161,7 @@ impl Workspace {
     }
 
     /// This function shifts focus to the panel on the left.
-    /// The current focusable panels are: Zap Drive, theme chooser, AI, and resource center (keyboard shortcuts page only)
+    /// The current focusable panels are: Warp Drive, theme chooser, AI, and resource center (keyboard shortcuts page only)
     fn focus_left_panel(&mut self, ctx: &mut ViewContext<Self>) {
         // Starts from terminal
         if self.active_tab_pane_group().is_self_or_child_focused(ctx) {
@@ -4162,7 +4181,7 @@ impl Workspace {
         {
             self.focus_active_tab(ctx);
         }
-        // Starts from a left panel: Zap Drive
+        // Starts from a left panel: Warp Drive
         else if self.is_warp_drive_view_focused(ctx) {
             if self.current_workspace_state.is_right_panel_open() {
                 self.set_selected_object(None, ctx);
@@ -4207,7 +4226,7 @@ impl Workspace {
                 ctx.focus(&self.theme_chooser_view);
             }
         }
-        // Starts from a left panel: Zap Drive, theme chooser
+        // Starts from a left panel: Warp Drive, theme chooser
         else if self.is_warp_drive_view_focused(ctx)
             || self.theme_chooser_view.is_self_or_child_focused(ctx)
         {
@@ -4345,6 +4364,11 @@ impl Workspace {
                 self.close_palette(false, None, ctx);
             }
 
+            // If the agent management view is open, we want to close it when we activate a new tab.
+            if FeatureFlag::AgentManagementView.is_enabled() {
+                self.set_is_agent_management_view_open(false, ctx);
+            }
+
             self.set_active_tab_index(index, ctx);
             self.focus_active_tab(ctx);
             self.update_window_title(ctx);
@@ -4465,6 +4489,12 @@ impl Workspace {
         // Focusing on the clicked tab
         if index >= self.tab_count() {
             return;
+        }
+
+        // If the agent management view is open, we want to close it when we change focus to rename a tab.
+        // This function doesn't call `activate_tab_internal`, which is why we need the extra check here.
+        if FeatureFlag::AgentManagementView.is_enabled() {
+            self.set_is_agent_management_view_open(false, ctx);
         }
 
         self.set_active_tab_index(index, ctx);
@@ -5214,24 +5244,9 @@ impl Workspace {
                 let pane_group = self.active_tab_pane_group().clone();
                 self.handle_file_tree_event(pane_group, pane_group_event, ctx);
             }
-            LeftPanelEvent::ZapDrive(drive_event) => {
+            LeftPanelEvent::WarpDrive(drive_event) => {
                 self.handle_warp_drive_event(drive_event, ctx);
             }
-            LeftPanelEvent::ServerFileBrowser(event) => match event {
-                crate::workspace::view::server_file_browser::ServerFileBrowserEvent::OpenRemoteFile {
-                    remote_path,
-                } => {
-                    #[cfg(feature = "local_tty")]
-                    self.open_remote_file(remote_path.clone(), ctx);
-                    #[cfg(not(feature = "local_tty"))]
-                    let _ = remote_path;
-                }
-                crate::workspace::view::server_file_browser::ServerFileBrowserEvent::CdToDirectory {
-                    path,
-                } => {
-                    self.cd_to_remote_directory(path, ctx);
-                }
-            },
             LeftPanelEvent::OpenFileWithTarget {
                 path,
                 target,
@@ -5245,12 +5260,6 @@ impl Workspace {
                     ctx,
                 );
             }
-            #[cfg(feature = "local_tty")]
-            LeftPanelEvent::OpenRemoteFile { remote_path } => {
-                self.open_remote_file(remote_path.clone(), ctx);
-            }
-            #[cfg(not(feature = "local_tty"))]
-            LeftPanelEvent::OpenRemoteFile { .. } => {}
             LeftPanelEvent::OpenSkillFile { source } => {
                 #[cfg(feature = "local_fs")]
                 {
@@ -5295,9 +5304,6 @@ impl Workspace {
             LeftPanelEvent::OpenSshTerminal { node_id, server } => {
                 self.open_ssh_terminal(node_id.clone(), server.clone(), ctx);
             }
-            LeftPanelEvent::OpenSftpPane { node_id, server: _ } => {
-                self.open_sftp_pane(node_id.clone(), ctx);
-            }
         }
     }
 
@@ -5317,67 +5323,6 @@ impl Workspace {
                 ctx,
             );
         });
-    }
-
-    /// 在中央区域打开给定 SSH 节点的 SFTP 文件浏览器 pane。
-    pub fn open_sftp_pane(&mut self, node_id: String, ctx: &mut ViewContext<Self>) {
-        use crate::pane_group::pane::sftp_pane::SftpPane;
-        self.active_tab_pane_group().update(ctx, |pane_group, ctx| {
-            let pane = SftpPane::new(node_id, ctx);
-            let smart_split_direction =
-                pane_group.smart_split_direction(ctx, WORKFLOW_AND_ENV_VAR_SPLIT_RATIO);
-            pane_group.add_pane_with_direction(
-                smart_split_direction,
-                pane,
-                true, /* focus_new_pane */
-                ctx,
-            );
-        });
-    }
-
-    /// 在远端文件树里点击一个文件后,以 buffer-sync 协议打开它。
-    ///
-    /// 远端文件与本地文件统一走 [`Self::open_code`] / `CodePane` / `CodeView`:
-    /// 这样它就和本地文件一样遵守 `open_file_layout`(新 tab / 分屏)以及多文件
-    /// 分组开关(多个远端文件并入同一个代码编辑器 pane 的内部 tab)。
-    ///
-    /// buffer 内容仍由 `GlobalBufferModel` 的 `BufferLocation::Remote` 路径打开
-    /// (向 daemon 发 `OpenBuffer`,后续 `BufferEdit` / `BufferUpdatedPush` 同步),
-    /// 这一段由 `LocalCodeEditorView::new_with_remote_buffer` 在 `CodeView` 内部
-    /// 完成。
-    #[cfg(feature = "local_tty")]
-    pub fn open_remote_file(
-        &mut self,
-        remote_path: crate::code::buffer_location::RemotePath,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        self.open_remote_file_with_target(remote_path, None, ctx);
-    }
-
-    /// 与 [`Self::open_remote_file`] 相同,但可携带 `line_col`(行:列跳转)。
-    /// 终端里 Ctrl/Cmd+点击远端文件路径时使用,把行号一路透传给 `open_code`。
-    #[cfg(feature = "local_tty")]
-    pub fn open_remote_file_with_target(
-        &mut self,
-        remote_path: crate::code::buffer_location::RemotePath,
-        line_col: Option<LineAndColumnArg>,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        log::info!(
-            "Opening remote file: host={host} path={path}",
-            host = remote_path.host_id,
-            path = remote_path.path.as_str()
-        );
-
-        let layout = *EditorSettings::as_ref(ctx).open_file_layout.value();
-        self.open_code(
-            CodeSource::RemoteFileTree { remote_path },
-            layout,
-            line_col,
-            false, /* preview */
-            &[],   /* additional_paths */
-            ctx,
-        );
     }
 
     /// 在当前 tab 开新 terminal pane,自动跑 `ssh ...` 命令,并 spawn 一个
@@ -5426,12 +5371,6 @@ impl Workspace {
             return;
         };
 
-        if AISettings::as_ref(ctx).default_session_mode(ctx) == DefaultSessionMode::Agent {
-            terminal_view.update(ctx, |view, _| {
-                view.set_enter_agent_view_after_ssh_bootstrap();
-            });
-        }
-
         // 1. 同步读 keychain(主线程 OK)。auth_type 决定查 password 还是 passphrase。
         let secret_kind = match server.auth_type {
             warp_ssh_manager::AuthType::Password => SecretKind::Password,
@@ -5454,35 +5393,6 @@ impl Workspace {
             secret,
             ctx,
         );
-
-        // 启动命令注入器 — 等待 shell ready 后自动执行 startup_command
-        if let Some(ref startup_cmd) = server.startup_command {
-            if !startup_cmd.is_empty() {
-                crate::ssh_manager::startup_command_injector::spawn_startup_command_injector(
-                    terminal_view.read(ctx, |v, c| v.inactive_pty_reads_rx(c)),
-                    terminal_view.downgrade(),
-                    startup_cmd.clone(),
-                    ctx,
-                );
-            }
-        }
-
-        // su 密码注入器 — 监听 su 密码提示,自动输入 root 密码
-        let root_secret = match KeychainSecretStore.get(&node_id, SecretKind::RootPassword) {
-            Ok(opt) => opt,
-            Err(e) => {
-                log::debug!("ssh root password keychain read failed: {e}");
-                None
-            }
-        };
-        if let Some(root_pw) = root_secret {
-            crate::ssh_manager::su_password_injector::spawn_su_password_injector(
-                terminal_view.read(ctx, |v, c| v.inactive_pty_reads_rx(c)),
-                terminal_view.downgrade(),
-                root_pw,
-                ctx,
-            );
-        }
 
         // 3. 排队 ssh 命令,等 bootstrap 完成自动 flush。
         terminal_view.update(ctx, |view, ctx| {
@@ -5598,14 +5508,8 @@ impl Workspace {
 
     #[cfg(not(target_family = "wasm"))]
     fn view_logs(&mut self, ctx: &mut ViewContext<Self>) {
-        // 在调用线程同步采集诊断信息(版本、平台、channel、执行模式、MCP/更新日志路径等),
-        // 真正的 zip 打包在阻塞线程上完成,避免读取 `AppContext` 全局状态时跨线程。
-        let extras = Self::collect_log_bundle_extras(ctx);
         ctx.spawn(
-            async move {
-                tokio::task::spawn_blocking(move || warp_logging::create_log_bundle_zip(extras))
-                    .await
-            },
+            async { tokio::task::spawn_blocking(warp_logging::create_log_bundle_zip).await },
             |me, result, ctx| match result {
                 Ok(Ok(path)) => {
                     ctx.open_file_path_in_explorer(&path);
@@ -5630,185 +5534,6 @@ impl Workspace {
         );
     }
 
-    /// 与 `view_logs` 不同:让用户通过系统原生 save-file 对话框选择保存位置,
-    /// 然后把日志包直接写到该位置。打包内容与 `view_logs` 完全一致。
-    ///
-    /// 失败 / 成功都通过 `toast_stack` 反馈,以便在设置页这种没有自己 toast
-    /// 区域的视图也能看到结果。
-    #[cfg(not(target_family = "wasm"))]
-    fn export_logs_to_path(&mut self, ctx: &mut ViewContext<Self>) {
-        use warpui::platform::SaveFilePickerConfiguration;
-
-        // 在调用线程同步采集 extras(读取 AppContext 全局状态),保存对话框
-        // 与实际写盘都在后续异步流程中。
-        let extras = Self::collect_log_bundle_extras(ctx);
-        let default_filename = warp_logging::default_log_bundle_filename();
-        let default_directory = dirs::download_dir().or_else(dirs::home_dir);
-
-        let mut config = SaveFilePickerConfiguration::new().with_default_filename(default_filename);
-        if let Some(directory) = default_directory {
-            config = config.with_default_directory(directory);
-        }
-
-        ctx.open_save_file_picker(
-            move |path_opt, _me, ctx| {
-                let Some(path_string) = path_opt else {
-                    // 用户取消,不打扰用户。
-                    return;
-                };
-                let output_path = std::path::PathBuf::from(path_string);
-                ctx.spawn(
-                    async move {
-                        tokio::task::spawn_blocking(move || {
-                            warp_logging::write_log_bundle_zip_to(&output_path, extras)
-                                .map(|()| output_path)
-                        })
-                        .await
-                    },
-                    |me, result, ctx| match result {
-                        Ok(Ok(path)) => {
-                            // i18n_embed_fl::fl! 要求位置参数活到 macro 展开结束,
-                            // 故先 `let` 绑定到本作用域的 String,再借用其 &str。
-                            let path_str = path.display().to_string();
-                            let message = crate::t!(
-                                "settings-about-export-logs-success",
-                                path = path_str.as_str()
-                            );
-                            me.toast_stack.update(ctx, |toast_stack, ctx| {
-                                let toast = DismissibleToast::success(message);
-                                toast_stack.add_persistent_toast(toast, ctx);
-                            });
-                        }
-                        Ok(Err(err)) => {
-                            log::error!("Failed to export log bundle: {err}");
-                            let error_str = format!("{err}");
-                            let message = crate::t!(
-                                "settings-about-export-logs-failure",
-                                error = error_str.as_str()
-                            );
-                            me.toast_stack.update(ctx, |toast_stack, ctx| {
-                                let toast = DismissibleToast::error(message);
-                                toast_stack.add_persistent_toast(toast, ctx);
-                            });
-                        }
-                        Err(err) => {
-                            log::error!("Failed to export log bundle: {err}");
-                            let error_str = format!("{err}");
-                            let message = crate::t!(
-                                "settings-about-export-logs-failure",
-                                error = error_str.as_str()
-                            );
-                            me.toast_stack.update(ctx, |toast_stack, ctx| {
-                                let toast = DismissibleToast::error(message);
-                                toast_stack.add_persistent_toast(toast, ctx);
-                            });
-                        }
-                    },
-                );
-            },
-            config,
-        );
-    }
-
-    /// 收集本次"导出日志"要附加进 zip 的诊断材料:
-    ///
-    /// - `manifest.txt`:版本 / channel / 平台 / arch / 执行模式 / 生成时间戳;
-    /// - 其它子系统日志(MCP server stderr、Windows 自动更新器、minidump 服务进程),
-    ///   仅当文件实际存在时才会进入 zip。
-    ///
-    /// 故意**不**打包的内容(权衡):
-    /// - `.dmp` minidump 二进制(可能极大,需要单独按需上传);
-    /// - `zap.prompt_chips.log`(含命令 stdout/stderr,仅在 debug channel 生成,默认隐私风险);
-    /// - profiling 产物(`dhat-heap.json` / `profile.pb`,仅特殊 cargo feature 启用)。
-    #[cfg(not(target_family = "wasm"))]
-    fn collect_log_bundle_extras(ctx: &AppContext) -> warp_logging::LogBundleExtras {
-        use std::path::{Path, PathBuf};
-        use warp_core::channel::ChannelState;
-        use warp_core::execution_mode::AppExecutionMode;
-        use warp_logging::{ExtraFile, InlineFile, LogBundleExtras};
-
-        let log_dir = warp_logging::log_directory().ok();
-
-        // 1) manifest.txt:可读的诊断摘要,排查问题时第一眼看的内容。
-        // 日志目录用 `home_relative_path` 脱敏(在 Unix 下把 `$HOME` 替换为 `~`),
-        // 避免分享 zip 给排查人员时泄露用户名 / 真实家目录路径。
-        let manifest = {
-            let version = ChannelState::app_version().unwrap_or("Dev");
-            let channel = ChannelState::channel();
-            let execution_mode = AppExecutionMode::as_ref(ctx);
-            let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S %z");
-            let log_dir_str = log_dir
-                .as_ref()
-                .map(|p| warp_core::paths::home_relative_path(p))
-                .unwrap_or_else(|| "<unknown>".to_string());
-
-            format!(
-                "Zap 日志导出\n\
-                 生成时间: {now}\n\
-                 版本: {version}\n\
-                 channel: {channel}\n\
-                 执行模式: {execution_mode:?}\n\
-                 OS: {os}\n\
-                 ARCH: {arch}\n\
-                 日志目录: {log_dir_str}\n",
-                os = std::env::consts::OS,
-                arch = std::env::consts::ARCH,
-            )
-        };
-
-        let mut extras = LogBundleExtras {
-            inline_files: vec![InlineFile {
-                entry_name: "manifest.txt".to_string(),
-                contents: manifest,
-            }],
-            ..Default::default()
-        };
-
-        // 2) 同目录下其它产物:同 channel 的 minidump 服务进程日志、Windows 更新器日志。
-        if let Some(dir) = log_dir.as_ref() {
-            let candidates: &[&str] = &[
-                "warp-minidump.log", // Linux/Windows minidump 服务进程
-                "warp_update.log",   // Windows 自动更新器(Inno Setup)
-            ];
-            for name in candidates {
-                let path = dir.join(name);
-                if path.is_file() {
-                    extras.extra_files.push(ExtraFile {
-                        source_path: path,
-                        entry_name: (*name).to_string(),
-                    });
-                }
-            }
-        }
-
-        // 3) MCP server 当前会话 stderr(`purge_on_startup: true`,只在运行期间存在)。
-        // 路径通过 `simple_logger::manager::resolve_log_path` 间接得到:取一个虚拟文件名
-        // 再 `parent()` 得到 namespace 目录,避免暴露 `log_directory_path` 私有 API。
-        let mcp_probe = simple_logger::manager::resolve_log_path("mcp", Path::new("_probe"));
-        if let Some(mcp_dir) = mcp_probe.parent() {
-            if let Ok(read_dir) = std::fs::read_dir(mcp_dir) {
-                for entry in read_dir.flatten() {
-                    let path: PathBuf = entry.path();
-                    let is_log = path
-                        .extension()
-                        .and_then(|s| s.to_str())
-                        .map(|ext| ext.eq_ignore_ascii_case("log"))
-                        .unwrap_or(false);
-                    if path.is_file() && is_log {
-                        if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                            extras.extra_files.push(ExtraFile {
-                                source_path: path.clone(),
-                                entry_name: format!("mcp/{file_name}"),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        extras
-    }
-
     fn copy_version(&mut self, version: &str, ctx: &mut ViewContext<Self>) {
         ctx.clipboard()
             .write(ClipboardContent::plain_text(version.to_string()));
@@ -5816,8 +5541,8 @@ impl Workspace {
 
     fn export_all_warp_drive_objects(&mut self, ctx: &mut ViewContext<Self>) {
         let window_id = ctx.window_id();
-        let object_store_model = ObjectStoreModel::as_ref(ctx);
-        let exportable_objects = object_store_model.get_all_exportable_object_ids();
+        let cloud_model = ObjectStoreModel::as_ref(ctx);
+        let exportable_objects = cloud_model.get_all_exportable_object_ids();
         ExportManager::handle(ctx).update(ctx, move |export_manager, ctx| {
             export_manager.export(window_id, &exportable_objects, ctx);
         });
@@ -5826,7 +5551,7 @@ impl Workspace {
     /// Builds the unified new-session menu items
     /// tab bar chevron and the vertical tab bar `+` button.
     ///
-    /// Order: Terminal → User tab configs → separator → Agent → Coding Agents → separator → Docker → Worktree config → New tab config → separator → Reopen closed session.
+    /// Order: Agent → Terminal (sidecar) → Cloud Oz → [tab configs] → separator → New worktree config (sidecar) → New tab config → separator → Reopen closed session.
     fn unified_new_session_menu_items(
         &self,
         ctx: &mut ViewContext<Self>,
@@ -5841,7 +5566,18 @@ impl Workspace {
         let reopen_closed_session_shortcut_label =
             keybinding_name_to_display_string("app:reopen_closed_session", ctx);
 
-        // 1. Terminal (+ individual shells on Windows)
+        // 1. Agent (if AI enabled)
+        if is_any_ai_enabled {
+            let mut agent_item = MenuItemFields::new(crate::t!("workspace-new-session-agent"))
+                .with_on_select_action(WorkspaceAction::AddAgentTab)
+                .with_icon(icons::Icon::LayoutAlt01);
+            if effective_default == DefaultSessionMode::Agent {
+                agent_item = agent_item.with_key_shortcut_label(shortcut_label.clone());
+            }
+            menu_items.push(agent_item.into_item());
+        }
+
+        // 2. Terminal (+ individual shells on Windows)
         {
             // On Windows, list the default terminal and each available shell as
             // individual top-level items (no submenu) so each gets a sidecar.
@@ -5899,10 +5635,24 @@ impl Workspace {
             }
         }
 
-        // 2. User tab configs
+        // 3. Local Docker Sandbox
+        if FeatureFlag::LocalDockerSandbox.is_enabled() {
+            let mut docker_item =
+                MenuItemFields::new(crate::t!("workspace-new-session-local-docker-sandbox"))
+                    .with_on_select_action(WorkspaceAction::AddDockerSandboxTab)
+                    .with_icon(icons::Icon::Docker);
+            if effective_default == DefaultSessionMode::DockerSandbox {
+                docker_item = docker_item.with_key_shortcut_label(shortcut_label.clone());
+            }
+            menu_items.push(docker_item.into_item());
+        }
+
+        // 4. User tab configs
         if FeatureFlag::TabConfigs.is_enabled() {
             let tab_configs = WarpConfig::as_ref(ctx).tab_configs().to_vec();
 
+            // Count occurrences of each config name so we can disambiguate
+            // duplicates in the menu (e.g. "My Tab Config", "My Tab Config (1)").
             let mut name_totals: HashMap<String, usize> = HashMap::new();
             for config in &tab_configs {
                 *name_totals.entry(config.name.clone()).or_default() += 1;
@@ -5944,60 +5694,7 @@ impl Workspace {
             }
         }
 
-        // 3. Separator — 仅在后面有 Agent 或 Coding Agent 时才显示
-        if is_any_ai_enabled {
-            menu_items.push(MenuItem::Separator);
-        }
-
-        // 4. Agent (if AI enabled)
-        if is_any_ai_enabled {
-            let mut agent_item = MenuItemFields::new(crate::t!("workspace-new-session-agent"))
-                .with_on_select_action(WorkspaceAction::AddAgentTab)
-                .with_icon(icons::Icon::LayoutAlt01);
-            if effective_default == DefaultSessionMode::Agent {
-                agent_item = agent_item.with_key_shortcut_label(shortcut_label.clone());
-            }
-            menu_items.push(agent_item.into_item());
-        }
-
-        // 5. Coding Agents — 仅已安装的出现在菜单中
-        let coding_agent_count = {
-            let start_len = menu_items.len();
-            for agent in enum_iterator::all::<CLIAgent>() {
-                if matches!(agent, CLIAgent::Unknown) {
-                    continue;
-                }
-                if !agent.is_installed() {
-                    continue;
-                }
-                let icon = agent.icon().unwrap_or(icons::Icon::LayoutAlt01);
-                let item = MenuItemFields::new(agent.display_name())
-                    .with_on_select_action(WorkspaceAction::AddSpecificAgentTab(agent))
-                    .with_icon(icon);
-                menu_items.push(item.into_item());
-            }
-            menu_items.len() - start_len
-        };
-
-        // 6. Separator — 仅当 coding agent 有内容且 Docker 启用时才显示
-        // TabConfigs 区域在 step 8 自带分隔线，无需这里重复
-        if coding_agent_count > 0 && FeatureFlag::LocalDockerSandbox.is_enabled() {
-            menu_items.push(MenuItem::Separator);
-        }
-
-        // 7. Local Docker Sandbox
-        if FeatureFlag::LocalDockerSandbox.is_enabled() {
-            let mut docker_item =
-                MenuItemFields::new(crate::t!("workspace-new-session-local-docker-sandbox"))
-                    .with_on_select_action(WorkspaceAction::AddDockerSandboxTab)
-                    .with_icon(icons::Icon::Docker);
-            if effective_default == DefaultSessionMode::DockerSandbox {
-                docker_item = docker_item.with_key_shortcut_label(shortcut_label.clone());
-            }
-            menu_items.push(docker_item.into_item());
-        }
-
-        // 8. Separator + worktree config entry + new tab config
+        // 5. Separator + worktree config entry + new tab config
         if FeatureFlag::TabConfigs.is_enabled() {
             menu_items.push(MenuItem::Separator);
             menu_items.push(
@@ -6006,6 +5703,7 @@ impl Workspace {
                     .into_item(),
             );
 
+            // 6. New tab config — V0: opens the TOML template.
             menu_items.push(
                 MenuItemFields::new(crate::t!("workspace-new-tab-config"))
                     .with_on_select_action(WorkspaceAction::SelectNewSessionMenuItem(
@@ -6134,7 +5832,7 @@ impl Workspace {
                 },
             ),
             NewSessionMenuItem::OpenLaunchConfigDocs => {
-                ctx.open_url("")
+                ctx.open_url("https://docs.warp.dev/terminal/sessions/launch-configurations")
             }
             #[cfg(feature = "local_fs")]
             NewSessionMenuItem::CreateNewTabConfig => {
@@ -6367,7 +6065,7 @@ impl Workspace {
     }
 
     /// The tab bar overflow menu is the context menu that appears when
-    /// a user clicks "Update Zap" in the top right of the tab bar.
+    /// a user clicks "Update Warp" in the top right of the tab bar.
     pub fn toggle_tab_bar_overflow_menu(&mut self, ctx: &mut ViewContext<Self>) {
         if self.show_tab_bar_overflow_menu {
             self.close_tab_bar_overflow_menu(ctx);
@@ -6458,6 +6156,21 @@ impl Workspace {
             })
     }
 
+    fn check_and_trigger_telemetry_banner_for_existing_users(
+        &mut self,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if FeatureFlag::GlobalAIAnalyticsBanner.is_enabled()
+            && PrivacySettings::as_ref(ctx).is_telemetry_enabled
+        {
+            if let Some(terminal_view_handle) = self.active_session_view(ctx) {
+                terminal_view_handle.update(ctx, |terminal_view, ctx| {
+                    terminal_view.insert_telemetry_banner(true, ctx);
+                });
+            }
+        }
+    }
+
     fn should_trigger_get_started_onboarding(&self, ctx: &mut ViewContext<Self>) -> bool {
         if !FeatureFlag::GetStartedTab.is_enabled() {
             return false;
@@ -6491,7 +6204,7 @@ impl Workspace {
     /// If the user is new and therefore has not seen the in app onboarding,
     /// triggers the welcome block to be shown after bootstrapping is completed.
     fn check_and_trigger_onboarding(&mut self, ctx: &mut ViewContext<Self>) -> bool {
-        // Zap: 去掉首次打开的 agentic suggestions 欢迎块教程。仍把用户标记为
+        // OpenWarp: 去掉首次打开的 agentic suggestions 欢迎块教程。仍把用户标记为
         // onboarded,避免下游(如 telemetry banner)把已用户当新用户处理。
         if !self.auth_state.is_onboarded().unwrap_or_default() {
             AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
@@ -6546,7 +6259,7 @@ impl Workspace {
         ctx.notify();
     }
 
-    /// Opens the Zap Drive object identified by `uid` in a new pane
+    /// Opens the Warp Drive object identified by `uid` in a new pane
     /// if it has a pane representation.
     fn open_warp_drive_object_in_new_pane(&mut self, uid: &ObjectUid, ctx: &mut ViewContext<Self>) {
         let Some(object) = ObjectStoreModel::as_ref(ctx).get_by_uid(uid) else {
@@ -6558,7 +6271,7 @@ impl Workspace {
             ObjectType::Notebook => {
                 self.open_notebook(
                     &NotebookSource::Existing(sync_id),
-                    &ZapDriveObjectSettings::default(),
+                    &OpenWarpDriveObjectSettings::default(),
                     ctx,
                     true,
                 );
@@ -6566,7 +6279,7 @@ impl Workspace {
             ObjectType::Workflow => {
                 self.open_workflow_in_pane(
                     &WorkflowOpenSource::Existing(sync_id),
-                    &ZapDriveObjectSettings::default(),
+                    &OpenWarpDriveObjectSettings::default(),
                     WorkflowViewMode::View,
                     ctx,
                 );
@@ -6595,7 +6308,7 @@ impl Workspace {
     pub fn open_notebook(
         &mut self,
         source: &NotebookSource,
-        settings: &ZapDriveObjectSettings,
+        settings: &OpenWarpDriveObjectSettings,
         ctx: &mut ViewContext<Self>,
         default_to_new_pane: bool,
     ) {
@@ -6616,8 +6329,8 @@ impl Workspace {
                     &locator,
                 );
             }
-            // TODO(zap-cloud-removal Phase 5): invitee_email/source 这条
-            // notebook 邀请链路已无 UI 出口,但 `ZapDriveObjectSettings.invitee_email`
+            // TODO(openwarp-cloud-removal Phase 5): invitee_email/source 这条
+            // notebook 邀请链路已无 UI 出口,但 `OpenWarpDriveObjectSettings.invitee_email`
             // 仍由 URL handler / drag-drop 链路传入。Phase 5 退役 invitee 概念时
             // 把字段从 settings 结构里也删掉。
             let _ = settings;
@@ -6639,7 +6352,7 @@ impl Workspace {
             });
         }
 
-        // Get notebook ID to set Zap drive index selected state
+        // Get notebook ID to set Warp drive index selected state
         if let NotebookSource::Existing(notebook_id) = source {
             let focused_folder_id = settings.focused_folder_id.map(SyncId::ServerId);
             if !notebook_already_open && !default_to_new_pane {
@@ -6668,11 +6381,11 @@ impl Workspace {
         }
     }
 
-    /// Open a Zap Drive workflow in response to an intent URL.
+    /// Open a Warp Drive workflow in response to an intent URL.
     pub fn open_workflow_from_intent(
         &mut self,
         workflow_id: SyncId,
-        settings: &ZapDriveObjectSettings,
+        settings: &OpenWarpDriveObjectSettings,
         ctx: &mut ViewContext<Self>,
     ) {
         // If running workflows is supported, do so. Otherwise, or if the workflow isn't in memory,
@@ -6715,7 +6428,7 @@ impl Workspace {
     pub fn open_workflow_in_pane(
         &mut self,
         source: &WorkflowOpenSource,
-        settings: &ZapDriveObjectSettings,
+        settings: &OpenWarpDriveObjectSettings,
         mode: WorkflowViewMode,
         ctx: &mut ViewContext<Self>,
     ) {
@@ -6972,21 +6685,6 @@ impl Workspace {
         });
     }
 
-    // 远端文件浏览器的 cd:与本地 cd_to_directory 不同,这里直接执行命令而不是
-    // 填入输入框。原因是远端会话切换工作目录后需要立即反馈到会话状态,且面板
-    // 是右键菜单触发的明确意图,不需要再让用户二次确认。
-    fn cd_to_remote_directory(&mut self, path: &str, ctx: &mut ViewContext<Self>) {
-        let Some(input_handle) = self.get_active_input_view_handle(ctx) else {
-            log::warn!("No active input view when trying to cd to remote directory");
-            return;
-        };
-
-        let cd_command = format!("cd -- {}", shell_words::quote(path));
-        input_handle.update(ctx, |input_view, ctx| {
-            input_view.try_execute_command(&cd_command, ctx);
-        });
-    }
-
     fn open_directory_in_new_tab(&mut self, path: PathBuf, ctx: &mut ViewContext<Self>) {
         let options = NewTerminalOptions::default().with_initial_directory(path);
         self.add_tab_with_pane_layout(
@@ -7033,21 +6731,15 @@ impl Workspace {
                         .is_pane_hidden_for_close(*pane_id)
                 });
             // If the tabbed editor view is enabled and there is an existing CodeView, we should group the newly opened file into this view.
-            if let (Some(location), Some((pane_id, code_view))) = (source.location(), code_view) {
+            if let (Some(path), Some((pane_id, code_view))) = (source.path(), code_view) {
                 code_view.update(ctx, |code_view, ctx| {
                     if preview {
-                        code_view.open_in_preview_or_promote_and_jump(location, line_col, ctx);
+                        code_view.open_in_preview_or_promote_and_jump(path, line_col, ctx);
                     } else {
-                        code_view.open_or_focus_existing(Some(location), line_col, ctx);
+                        code_view.open_or_focus_existing(Some(path), line_col, ctx);
                     }
                     for extra in additional_paths {
-                        code_view.open_or_focus_existing(
-                            Some(crate::code::buffer_location::BufferLocation::Local(
-                                extra.clone(),
-                            )),
-                            None,
-                            ctx,
-                        );
+                        code_view.open_or_focus_existing(Some(extra.clone()), None, ctx);
                     }
                 });
                 // Only focus the pane for non-preview opens
@@ -7061,10 +6753,10 @@ impl Workspace {
         } else {
             // When grouping is off, avoid opening duplicate code panes for the same file in the
             // current pane group. Instead, focus the existing pane and jump.
-            if let Some(location) = source.location() {
+            if let Some(path) = source.path() {
                 let pane_group_id = self.active_tab_pane_group().id();
                 let existing_locator = CodeManager::handle(ctx).read(ctx, |manager, _| {
-                    manager.get_locator_for_location_in_tab(pane_group_id, &location)
+                    manager.get_locator_for_path_in_tab(pane_group_id, path.as_path())
                 });
 
                 if let Some(locator) = existing_locator {
@@ -7077,13 +6769,13 @@ impl Workspace {
                             code_view.update(ctx, |code_view, ctx| {
                                 if preview {
                                     code_view.open_in_preview_or_promote_and_jump(
-                                        location.clone(),
+                                        path.clone(),
                                         line_col,
                                         ctx,
                                     );
                                 } else {
                                     code_view.open_or_focus_existing(
-                                        Some(location.clone()),
+                                        Some(path.clone()),
                                         line_col,
                                         ctx,
                                     );
@@ -7091,9 +6783,7 @@ impl Workspace {
 
                                 for extra in additional_paths {
                                     code_view.open_or_focus_existing(
-                                        Some(crate::code::buffer_location::BufferLocation::Local(
-                                            extra.clone(),
-                                        )),
+                                        Some(extra.clone()),
                                         None,
                                         ctx,
                                     );
@@ -7151,13 +6841,7 @@ impl Workspace {
             if let Some(code_view) = code_view_handle {
                 code_view.update(ctx, |code_view, ctx| {
                     for path in additional_paths {
-                        code_view.open_or_focus_existing(
-                            Some(crate::code::buffer_location::BufferLocation::Local(
-                                path.clone(),
-                            )),
-                            None,
-                            ctx,
-                        );
+                        code_view.open_or_focus_existing(Some(path.clone()), None, ctx);
                     }
                 });
             }
@@ -7255,7 +6939,7 @@ impl Workspace {
         });
     }
 
-    // Zap Wave 7-3:`open_environment_management_pane` 随 ambient-agent UI 子系统
+    // OpenWarp Wave 7-3:`open_environment_management_pane` 随 Cloud Mode UI 子系统
     // 物理删。
 
     pub(super) fn active_session_view(
@@ -7285,7 +6969,7 @@ impl Workspace {
         ctx.notify();
     }
 
-    /// Find an active session and pre-fill the input editor the Zap executable with the
+    /// Find an active session and pre-fill the input editor the Warp executable with the
     /// [`warp_cli::Command::DumpDebugInfo`] subcommand.
     fn dump_debug_info(&mut self, ctx: &mut ViewContext<Self>) {
         if let Some(exec) = std::env::current_exe()
@@ -7324,7 +7008,7 @@ impl Workspace {
         }
     }
 
-    /// Install the Zap CLI by creating a symlink in /usr/local/bin
+    /// Install the Warp CLI by creating a symlink in /usr/local/bin
     #[cfg(target_os = "macos")]
     fn install_cli(&mut self, ctx: &mut ViewContext<Self>) {
         ctx.spawn(async { cli_install::install_cli() }, |view, result, ctx| {
@@ -7336,7 +7020,7 @@ impl Workspace {
                         let toast = DismissibleToast::success(message.to_string())
                             .with_link(
                                 ToastLink::new(crate::t!("common-learn-more")).with_href(
-                                    "".to_string(),
+                                    "https://docs.warp.dev/reference/cli".to_string(),
                                 ),
                             );
                         toast_stack.add_ephemeral_toast(toast, ctx);
@@ -7354,7 +7038,7 @@ impl Workspace {
         });
     }
 
-    /// Uninstall the Zap CLI by removing the symlink from /usr/local/bin
+    /// Uninstall the Warp CLI by removing the symlink from /usr/local/bin
     #[cfg(target_os = "macos")]
     fn uninstall_cli(&mut self, ctx: &mut ViewContext<Self>) {
         ctx.spawn(
@@ -7445,28 +7129,28 @@ impl Workspace {
         explicit_user_action: bool,
         ctx: &mut ViewContext<Self>,
     ) {
-        // Closing all left panels will also close zap drive so we need to retrieve
-        // whether zap drive was open first, and toggle based on the initial value.
+        // Closing all left panels will also close warp drive so we need to retrieve
+        // whether warp drive was open first, and toggle based on the initial value.
         let was_warp_drive_open = self.current_workspace_state.is_warp_drive_open;
         self.current_workspace_state.close_all_left_panels();
         self.current_workspace_state.is_warp_drive_open =
             if toggle { !was_warp_drive_open } else { true };
 
-        // Set selected object to None upon toggle close of Zap Drive
+        // Set selected object to None upon toggle close of Warp Drive
         if !self.current_workspace_state.is_warp_drive_open {
             self.set_selected_object(None, ctx);
             self.focus_active_tab(ctx);
         }
 
-        // Reset focused index when opening/toggling Zap Drive open
+        // Reset focused index when opening/toggling Warp Drive open
         if self.current_workspace_state.is_warp_drive_open {
             self.reset_focused_index_in_warp_drive(true, ctx);
         }
 
         ctx.notify();
 
-        // Telemetry and welcome tip logic is only for when the user explicitly opens Zap Drive
-        // AND zap drive wasn't open before. There are other scenarios where we open Zap Drive like:
+        // Telemetry and welcome tip logic is only for when the user explicitly opens Warp Drive
+        // AND warp drive wasn't open before. There are other scenarios where we open Warp Drive like:
         // new user onboarding, user joins a team, etc so we want to avoid counting those.
         if explicit_user_action
             && !was_warp_drive_open
@@ -7481,7 +7165,7 @@ impl Workspace {
             );
             self.tips_completed.update(ctx, |tips_completed, ctx| {
                 mark_feature_used_and_write_to_user_defaults(
-                    Tip::Action(TipAction::ZapDrive),
+                    Tip::Action(TipAction::OpenWarpDrive),
                     tips_completed,
                     ctx,
                 );
@@ -7962,7 +7646,7 @@ impl Workspace {
     }
 
     fn user_menu_items(&self, app: &AppContext) -> Vec<MenuItem<WorkspaceAction>> {
-        // 去中心化分支:用户菜单不再展示账户名 / 账号 CTA / Upgrade / Billing / Invite /
+        // 去中心化分支:用户菜单不再展示账户名 / Sign up / Upgrade / Billing / Invite /
         // Log out 等云端账户相关项,只保留本地可用入口(更新、设置、文档、反馈、日志)。
         let mut items = Vec::new();
 
@@ -8050,7 +7734,7 @@ impl Workspace {
             MenuItem::Separator,
         ]);
 
-        // 去中心化分支:此处原本会追加账号 CTA / Upgrade / Billing / Invite / Log out
+        // 去中心化分支:此处原本会追加 Sign up / Upgrade / Billing / Invite / Log out
         // 等账号相关项,本地模式下全部移除。
         items
     }
@@ -8387,11 +8071,6 @@ impl Workspace {
             Some(WorkspaceAction::AddDockerSandboxTab) => SidecarItemKind::BuiltIn {
                 name: label.to_string(),
                 default_mode: DefaultSessionMode::DockerSandbox,
-                shell: None,
-            },
-            Some(WorkspaceAction::AddSpecificAgentTab(agent)) => SidecarItemKind::BuiltIn {
-                name: agent.display_name().to_string(),
-                default_mode: DefaultSessionMode::Agent,
                 shell: None,
             },
             _ => {
@@ -9092,12 +8771,12 @@ impl Workspace {
             // Check if workflow displayed in info box matches the one that was just updated.
             if open_workflow_id == Some(*workflow_id) {
                 // Fetch latest version of workflow and update info box with fresh contents
-                let object_store_model = ObjectStoreModel::as_ref(ctx);
-                if let Some(workflow) = object_store_model.get_workflow(workflow_id) {
+                let cloud_model = ObjectStoreModel::as_ref(ctx);
+                if let Some(workflow) = cloud_model.get_workflow(workflow_id) {
                     // Proc same behavior as DrivePanelEvent::RunWorkflow
                     self.run_cloud_workflow_in_active_input(
                         workflow.clone(),
-                        WorkflowSelectionSource::ZapDrive,
+                        WorkflowSelectionSource::WarpDrive,
                         TerminalSessionFallbackBehavior::default(),
                         ctx,
                     );
@@ -9321,7 +9000,18 @@ impl Workspace {
             AuthManagerEvent::AttemptedLoginGatedFeature { auth_view_variant } => {
                 self.open_require_login_modal(*auth_view_variant, ctx)
             }
-            AuthManagerEvent::AuthComplete => {}
+            AuthManagerEvent::LoginOverrideDetected(interrupted_auth_payload) => {
+                self.open_auth_override_warning_modal(interrupted_auth_payload.clone(), ctx);
+            }
+            AuthManagerEvent::AuthComplete => {
+                // Only show the telemetry banner if the user is an existing user. The new user flow
+                // for this is handled in the onboarding flow.
+                if self.auth_state.is_onboarded().unwrap_or_default() {
+                    // Need to check this AFTER we fetch any billing metadata associated with the team,
+                    // to make sure we don't show the banner if the user is an enterprise user.
+                    self.check_and_trigger_telemetry_banner_for_existing_users(ctx);
+                }
+            }
             _ => {
                 ctx.notify();
             }
@@ -9492,7 +9182,7 @@ impl Workspace {
         let warp_drive_index_width = modal_sizes.map(|ms| {
             ms.warp_drive_index_width
                 .lock()
-                .expect("should be able to lock zap drive resizable state handle")
+                .expect("should be able to lock warp drive resizable state handle")
                 .size()
         });
 
@@ -10092,7 +9782,7 @@ impl Workspace {
 
     pub fn open_autoupdate_failure_link(&mut self, ctx: &mut ViewContext<Self>) {
         ctx.open_url(
-            "",
+            "https://docs.warp.dev/support-and-community/troubleshooting-and-support/updating-warp",
         );
     }
 
@@ -10442,7 +10132,7 @@ impl Workspace {
     pub fn add_tab_for_cloud_notebook(
         &mut self,
         notebook_id: SyncId,
-        settings: &ZapDriveObjectSettings,
+        settings: &OpenWarpDriveObjectSettings,
         ctx: &mut ViewContext<Self>,
     ) {
         // TODO: We should validate that this notebook exists and fallback if it doesn't
@@ -10460,7 +10150,7 @@ impl Workspace {
     fn add_tab_for_cloud_workflow(
         &mut self,
         workflow_id: SyncId,
-        settings: &ZapDriveObjectSettings,
+        settings: &OpenWarpDriveObjectSettings,
         ctx: &mut ViewContext<Self>,
     ) {
         let panes_layout = PanesLayout::Snapshot(Box::new(PaneNodeSnapshot::Leaf(LeafSnapshot {
@@ -11801,6 +11491,20 @@ impl Workspace {
         ctx.notify();
     }
 
+    fn open_auth_override_warning_modal(
+        &mut self,
+        auth_payload: AuthRedirectPayload,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.close_all_overlays(ctx);
+        self.auth_override_warning_modal.update(ctx, |modal, _| {
+            modal.set_interrupted_auth_payload(auth_payload);
+        });
+        self.current_workspace_state.is_auth_override_modal_open = true;
+        ctx.focus(&self.auth_override_warning_modal);
+        ctx.notify();
+    }
+
     fn open_palette(
         &mut self,
         mode: PaletteMode,
@@ -11838,7 +11542,7 @@ impl Workspace {
                 _ => self.open_navigation_palette(ctx),
             },
             PaletteMode::LaunchConfig => self.open_launch_config_palette(ctx),
-            PaletteMode::ZapDrive => self.open_warp_drive_palette(ctx),
+            PaletteMode::WarpDrive => self.open_warp_drive_palette(ctx),
             PaletteMode::Files => self.open_files_palette(ctx),
             PaletteMode::Conversations => self.open_conversations_palette(ctx),
         }
@@ -11931,7 +11635,7 @@ impl Workspace {
             }
             CommandPaletteEvent::OpenNotebook { id } => self.open_notebook(
                 &NotebookSource::Existing(*id),
-                &ZapDriveObjectSettings::default(),
+                &OpenWarpDriveObjectSettings::default(),
                 ctx,
                 true,
             ),
@@ -11973,11 +11677,11 @@ impl Workspace {
     }
 
     /// This function is used when we set a selected object, which is an object open in an active pane.
-    /// We do not want to focus Zap Drive, instead we want to focus the editor of the open object.
+    /// We do not want to focus Warp Drive, instead we want to focus the editor of the open object.
     fn view_in_warp_drive(&mut self, item_id: WarpDriveItemId, ctx: &mut ViewContext<Self>) {
         self.open_left_panel(ctx);
         self.left_panel_view.update(ctx, |left_panel, ctx| {
-            left_panel.handle_action(&LeftPanelAction::ZapDrive, ctx);
+            left_panel.handle_action(&LeftPanelAction::WarpDrive, ctx);
         });
 
         if let WarpDriveItemId::Object(object_id) = item_id {
@@ -11992,7 +11696,7 @@ impl Workspace {
         });
     }
 
-    /// This function is used when we want to view an item in Zap Drive AND focus Zap Drive.
+    /// This function is used when we want to view an item in Warp Drive AND focus Warp Drive.
     pub fn view_in_and_focus_warp_drive(
         &mut self,
         item_id: WarpDriveItemId,
@@ -12007,7 +11711,7 @@ impl Workspace {
         ctx.notify();
     }
 
-    /// Updates the left panel's zap drive view.
+    /// Updates the left panel's warp drive view.
     fn update_warp_drive_view<F>(&mut self, ctx: &mut ViewContext<Self>, update_fn: F)
     where
         F: FnOnce(&mut DrivePanel, &mut ViewContext<DrivePanel>),
@@ -12038,7 +11742,7 @@ impl Workspace {
     }
 
     fn handle_changelog_event(&mut self, _event: &ChangelogEvent, _ctx: &mut ViewContext<Self>) {
-        // Zap 是本地化 fork,不依赖私有 changelog 服务,不在更新后弹出 toast/resource-center。
+        // OpenWarp 是本地化 fork,不依赖私有 changelog 服务,不在更新后弹出 toast/resource-center。
     }
 
     fn manual_check_for_update(&self, ctx: &mut ViewContext<Self>) {
@@ -12093,10 +11797,21 @@ impl Workspace {
         ctx: &mut ViewContext<Self>,
     ) {
         match event {
-            // Zap 去中心化分支:`CheckForUpdate` / `ZapDrive` 事件 arm 随
-            // `SettingsViewEvent` 中同名 variant 一同物理删。手动检查更新仍可
-            // 由 `WorkspaceAction::CheckForUpdate`(`workspace:check_for_updates` binding)
-            // 触发;Zap Drive 仍可由 `WorkspaceAction::ZapDrive` 触发。
+            SettingsViewEvent::CheckForUpdate => {
+                self.manual_check_for_update(ctx);
+            }
+            SettingsViewEvent::OpenWarpDrive => {
+                self.close_all_overlays(ctx);
+                self.open_or_toggle_warp_drive(
+                    false, /* toggle */
+                    false, /* explicit_user_action */
+                    ctx,
+                );
+                ctx.notify();
+            }
+            SettingsViewEvent::SignupAnonymousUser => {
+                self.initiate_user_signup(AnonymousUserSignupEntrypoint::SignUpButton, ctx);
+            }
             SettingsViewEvent::Pane(_) | SettingsViewEvent::StartResize => {}
             SettingsViewEvent::ShowToast { message, flavor } => {
                 self.toast_stack.update(ctx, |toast_stack, ctx| {
@@ -12274,7 +11989,7 @@ impl Workspace {
                             play_sound,
                         ),
                         move |workspace, notification_error, ctx| {
-                            // 未知错误写本地日志,便于排查通知系统问题。
+                            // Log to sentry if unknown error
                             if let NotificationSendError::Other { error_message } =
                                 &notification_error
                             {
@@ -12337,7 +12052,7 @@ impl Workspace {
             pane_group::Event::OpenCloudWorkflowForEdit(workflow_id) => self
                 .open_workflow_with_existing(
                     *workflow_id,
-                    &ZapDriveObjectSettings::default(),
+                    &OpenWarpDriveObjectSettings::default(),
                     ctx,
                 ),
             pane_group::Event::OpenWorkflowModalWithTemporary(workflow) => {
@@ -12399,7 +12114,7 @@ impl Workspace {
             } => {
                 self.move_to_drive_space(*object_type_and_id, *space, ctx);
             }
-            pane_group::Event::ZapDriveLink {
+            pane_group::Event::OpenWarpDriveLink {
                 open_warp_drive_args,
             } => {
                 let object_found = ObjectStoreModel::as_ref(ctx)
@@ -12447,7 +12162,7 @@ impl Workspace {
                         ctx,
                     ),
                     _ => {
-                        log::warn!("Attempted to open an unsupported Zap Drive link")
+                        log::warn!("Attempted to open an unsupported Warp Drive link")
                     }
                 }
             }
@@ -12720,13 +12435,6 @@ impl Workspace {
                 if let Ok(std_path) = StandardizedPath::try_new(indexed_path) {
                     let remote_id = RemoteRepositoryIdentifier::new(host_id.clone(), std_path);
                     let pane_group_id = pane_group.id();
-                    self.left_panel_view.update(ctx, |left_panel, ctx| {
-                        left_panel.navigate_server_file_browser(
-                            host_id.clone(),
-                            indexed_path.to_string(),
-                            ctx,
-                        );
-                    });
                     if let Some(file_tree_view) = self
                         .working_directories_model
                         .as_ref(ctx)
@@ -12812,25 +12520,23 @@ impl Workspace {
                                             return;
                                         }
 
-                                        let moved_file_location =
+                                        let moved_file_path =
                                             pane_group.update(ctx, |pane_group, ctx| {
                                                 pane_group.code_pane_by_id(*pane_id).and_then(
                                                     |pane| {
                                                         pane.file_view(ctx).update(
                                                             ctx,
                                                             |file_view, ctx| {
-                                                                let moved_file_location = file_view
+                                                                let moved_file_path = file_view
                                                                     .tab_at(*editor_tab_index)
-                                                                    .and_then(|t| {
-                                                                        t.location().cloned()
-                                                                    });
+                                                                    .and_then(|t| t.path());
 
                                                                 file_view.remove_tab_for_move(
                                                                     *editor_tab_index,
                                                                     ctx,
                                                                 );
 
-                                                                moved_file_location
+                                                                moved_file_path
                                                             },
                                                         )
                                                     },
@@ -12838,13 +12544,9 @@ impl Workspace {
                                             });
 
                                         // After removing the file from the origin's editor, we want to open it in the target's editor.
-                                        if let Some(location) = moved_file_location {
+                                        if let Some(path) = moved_file_path {
                                             target_code_view.update(ctx, |view, ctx| {
-                                                view.open_or_focus_existing(
-                                                    Some(location),
-                                                    None,
-                                                    ctx,
-                                                );
+                                                view.open_or_focus_existing(Some(path), None, ctx);
                                             });
                                         }
                                         return;
@@ -12976,7 +12678,7 @@ impl Workspace {
                 ctx.notify();
             }
             pane_group::Event::ClearHoveredTabIndex => self.hovered_tab_index = None,
-            pane_group::Event::ZapDriveObjectInPane(uid) => {
+            pane_group::Event::OpenWarpDriveObjectInPane(uid) => {
                 self.open_warp_drive_object_in_new_pane(uid, ctx);
             }
             pane_group::Event::OpenSuggestedAgentModeWorkflowModal { workflow_and_id } => {
@@ -12984,6 +12686,9 @@ impl Workspace {
             }
             pane_group::Event::OpenSuggestedRuleModal { rule_and_id } => {
                 self.open_suggested_rule_modal(rule_and_id, ctx);
+            }
+            pane_group::Event::AnonymousUserSignup => {
+                self.initiate_user_signup(AnonymousUserSignupEntrypoint::RenotificationBlock, ctx);
             }
             pane_group::Event::OpenPalette {
                 mode,
@@ -13135,6 +12840,9 @@ impl Workspace {
                     toast_stack.add_ephemeral_toast(toast, ctx);
                 });
             }
+            pane_group::Event::SignupAnonymousUser { entrypoint } => {
+                self.initiate_user_signup(*entrypoint, ctx);
+            }
             pane_group::Event::OpenThemeChooser => {
                 self.show_theme_chooser_for_custom_theme(ctx);
             }
@@ -13179,7 +12887,7 @@ impl Workspace {
                     self.left_panel_view
                         .read(ctx, |left_panel, _| match target_view {
                             LeftPanelTargetView::FileTree => left_panel.is_file_tree_active(),
-                            LeftPanelTargetView::ZapDrive => left_panel.is_warp_drive_active(),
+                            LeftPanelTargetView::WarpDrive => left_panel.is_warp_drive_active(),
                         });
 
                 if self.active_tab_pane_group().as_ref(ctx).left_panel_open && is_target_active {
@@ -13194,7 +12902,7 @@ impl Workspace {
                     self.left_panel_view.update(ctx, |left_panel, ctx| {
                         let action = match target_view {
                             LeftPanelTargetView::FileTree => LeftPanelAction::ProjectExplorer,
-                            LeftPanelTargetView::ZapDrive => LeftPanelAction::ZapDrive,
+                            LeftPanelTargetView::WarpDrive => LeftPanelAction::WarpDrive,
                         };
                         left_panel.handle_action_with_force_open(&action, *force_open, ctx);
                     });
@@ -13218,14 +12926,6 @@ impl Workspace {
                     ctx,
                 );
             }
-            // Zap:终端里 Ctrl/Cmd+点击远端 SSH 文件路径,走 buffer-sync 协议打开。
-            #[cfg(all(feature = "local_tty", feature = "local_fs"))]
-            pane_group::Event::OpenRemoteFileFromTerminal {
-                remote_path,
-                line_col,
-            } => {
-                self.open_remote_file_with_target(remote_path.clone(), *line_col, ctx);
-            }
             #[cfg(feature = "local_fs")]
             pane_group::Event::FileRenamed { old_path, new_path } => {
                 self.rename_tabs_with_file_path(old_path, new_path, ctx);
@@ -13237,8 +12937,8 @@ impl Workspace {
             pane_group::Event::OpenAgentProfileEditor { profile_id } => {
                 self.open_execution_profile_editor_pane(None, *profile_id, ctx);
             }
-            // Zap Wave 7-3:`pane_group::Event::OpenEnvironmentManagementPane` handler 随
-            // ambient-agent UI 子系统物理删。
+            // OpenWarp Wave 7-3:`pane_group::Event::OpenEnvironmentManagementPane` handler 随
+            // Cloud Mode UI 子系统物理删。
             pane_group::Event::LeftPanelToggled { is_open } => {
                 // Only handle visibility changes from the active pane group.
                 if pane_group.id() == self.active_tab_pane_group().id() {
@@ -13328,6 +13028,9 @@ impl Workspace {
                         code_review_view.expand_comment_list(ctx);
                     });
                 }
+            }
+            pane_group::Event::FreeTierLimitCheckTriggered => {
+                self.free_tier_limit_check_triggered = true;
             }
         }
     }
@@ -13583,7 +13286,6 @@ impl Workspace {
 
             let window_id = ctx.window_id();
             let path_if_local_clone = path_if_local.clone();
-            let server_file_browser_session = session.clone();
             ActiveSession::handle(ctx).update(ctx, |active_session, ctx| {
                 active_session.set_session_state(
                     window_id,
@@ -13611,39 +13313,9 @@ impl Workspace {
             // directory so it can start indexing and push repo metadata back.
             #[cfg(feature = "local_fs")]
             if has_remote_server {
-                if let (Some(sid), Some(cwd)) = (session_id, pwd.clone()) {
+                if let (Some(sid), Some(cwd)) = (session_id, pwd) {
                     RemoteServerManager::handle(ctx).update(ctx, |mgr, ctx| {
-                        mgr.navigate_to_directory(sid, cwd.clone(), ctx);
-                    });
-                }
-            }
-
-            // Bind the server file browser to the active remote session.
-            // When the remote server is connected, the client path is fast
-            // and feature-complete. Otherwise fall back to
-            // `Session::execute_command` for basic directory browsing.
-            #[cfg(feature = "local_fs")]
-            if let (Some(sid), Some(cwd), Some(s)) =
-                (session_id, pwd.clone(), server_file_browser_session)
-            {
-                // 加上 `ServerFileBrowser` 守卫,确保该功能被 `ZAP_UNSTABLE_FEATURES`
-                // 关闭时不要在 SSH 会话激活后偷偷拉取远程目录,避免任何相关后台活动。
-                if is_remote
-                    && FeatureFlag::ServerFileBrowser.is_enabled()
-                    && FeatureFlag::SshRemoteServer.is_enabled()
-                {
-                    let host_id = RemoteServerManager::as_ref(ctx)
-                        .host_id_for_session(sid)
-                        .cloned()
-                        .unwrap_or_else(|| HostId::new(format!("ssh-{sid:?}")));
-                    self.left_panel_view.update(ctx, |left_panel, ctx| {
-                        left_panel.set_server_file_browser_root(
-                            host_id,
-                            cwd,
-                            Some(sid),
-                            Some(s),
-                            ctx,
-                        );
+                        mgr.navigate_to_directory(sid, cwd, ctx);
                     });
                 }
             }
@@ -13707,7 +13379,7 @@ impl Workspace {
             DrivePanelEvent::RunWorkflow(workflow) => {
                 self.run_cloud_workflow_in_active_input(
                     workflow.as_ref().clone(),
-                    WorkflowSelectionSource::ZapDrive,
+                    WorkflowSelectionSource::WarpDrive,
                     TerminalSessionFallbackBehavior::default(),
                     ctx,
                 );
@@ -13722,6 +13394,9 @@ impl Workspace {
                     ctx,
                 );
             }
+            DrivePanelEvent::OpenTeamSettingsPage => {
+                self.show_settings_with_section(Some(SettingsSection::Teams), ctx);
+            }
             DrivePanelEvent::OpenImportModal {
                 owner,
                 initial_folder_id,
@@ -13735,27 +13410,27 @@ impl Workspace {
             DrivePanelEvent::OpenWorkflowModalWithWorkflowObject(workflow_id) => {
                 self.open_workflow_with_existing(
                     *workflow_id,
-                    &ZapDriveObjectSettings::default(),
+                    &OpenWarpDriveObjectSettings::default(),
                     ctx,
                 );
             }
             DrivePanelEvent::OpenSearch => {
                 self.open_palette_action(
-                    PaletteMode::ZapDrive,
-                    PaletteSource::ZapDrive,
+                    PaletteMode::WarpDrive,
+                    PaletteSource::WarpDrive,
                     None,
                     ctx,
                 );
             }
             DrivePanelEvent::OpenNotebook(source) => {
-                self.open_notebook(source, &ZapDriveObjectSettings::default(), ctx, true)
+                self.open_notebook(source, &OpenWarpDriveObjectSettings::default(), ctx, true)
             }
             DrivePanelEvent::OpenEnvVarCollection(source) => {
                 self.open_env_var_collection(source, false, ctx)
             }
             DrivePanelEvent::OpenWorkflowInPane(source, mode) => self.open_workflow_in_pane(
                 source,
-                &ZapDriveObjectSettings::default(),
+                &OpenWarpDriveObjectSettings::default(),
                 *mode,
                 ctx,
             ),
@@ -13763,7 +13438,7 @@ impl Workspace {
                 self.open_ai_fact_collection_pane(None, None, ctx);
                 send_telemetry_from_ctx!(
                     TelemetryEvent::KnowledgePaneOpened {
-                        entrypoint: KnowledgePaneEntrypoint::ZapDrive,
+                        entrypoint: KnowledgePaneEntrypoint::WarpDrive,
                     },
                     ctx
                 );
@@ -13773,7 +13448,7 @@ impl Workspace {
 
                 send_telemetry_from_ctx!(
                     TelemetryEvent::MCPServerCollectionPaneOpened {
-                        entrypoint: MCPServerCollectionPaneEntrypoint::ZapDrive,
+                        entrypoint: MCPServerCollectionPaneEntrypoint::WarpDrive,
                     },
                     ctx
                 );
@@ -13782,7 +13457,7 @@ impl Workspace {
                 ctx.focus(&self.left_panel_view);
             }
             DrivePanelEvent::OpenSharedObjectsCreationDeniedModal(_, _) => {
-                // Zap:云端 Drive 配额拒绝弹窗已删除,事件直接忽略
+                // OpenWarp:云端 Drive 配额拒绝弹窗已删除,事件直接忽略
             }
             DrivePanelEvent::AttachPlanAsContext(id) => {
                 self.attach_plan_as_context(*id, ctx);
@@ -14176,7 +13851,7 @@ impl Workspace {
                     AcceptNotebook(sync_id) => {
                         self.open_notebook(
                             &NotebookSource::Existing(*sync_id),
-                            &ZapDriveObjectSettings::default(),
+                            &OpenWarpDriveObjectSettings::default(),
                             ctx,
                             true,
                         );
@@ -14188,7 +13863,7 @@ impl Workspace {
                             ctx,
                         );
                     }
-                    ZapAI => {
+                    OpenWarpAI => {
                         if !AISettings::as_ref(ctx).is_any_ai_enabled(ctx) {
                             return;
                         }
@@ -14274,7 +13949,7 @@ impl Workspace {
             return;
         };
 
-        let object_store_model = ObjectStoreModel::as_ref(ctx);
+        let cloud_model = ObjectStoreModel::as_ref(ctx);
 
         let object_id = result
             .server_id
@@ -14282,7 +13957,7 @@ impl Workspace {
             .or_else(|| result.client_id.map(|client_id| client_id.to_string()));
 
         if let Some(object_id) = object_id {
-            if let Some(object) = object_store_model.get_by_uid(&object_id) {
+            if let Some(object) = cloud_model.get_by_uid(&object_id) {
                 let object_type_and_id = object.object_type_and_id();
                 if !object.should_show_activity_toasts() {
                     // Early exit for objects that don't show toasts.
@@ -14487,8 +14162,8 @@ impl Workspace {
         if result.success_type == OperationSuccessType::Success
             && result.operation == ObjectOperation::Update
         {
-            let object_store_model = ObjectStoreModel::as_ref(ctx);
-            let updated_object = object_store_model
+            let cloud_model = ObjectStoreModel::as_ref(ctx);
+            let updated_object = cloud_model
                 .get_by_uid(&result.server_id.expect("Expect server id on success").uid());
             if let Some(ObjectTypeAndId::Workflow(workflow_id)) =
                 updated_object.map(|o| o.object_type_and_id())
@@ -14506,7 +14181,7 @@ impl Workspace {
                 .server_id
                 .and_then(|id| ObjectStoreModel::as_ref(ctx).get_by_uid(&id.uid()))
             {
-                // TODO(zap-cloud-removal Phase 5): drive sharing onboarding
+                // TODO(openwarp-cloud-removal Phase 5): drive sharing onboarding
                 // block 已退;`created_object` 仍是 cloud_object 创建结果,
                 // StoredObject 模型本身在后续 phase 一并退役。
                 let _ = created_object;
@@ -14732,6 +14407,20 @@ impl Workspace {
         self.open_settings_pane(section, Some(search_query), ctx);
     }
 
+    /// Opens the team settings page and fills the invite field with the given email. This is used when linking directing to
+    /// settings with the intent of inviting a user.
+    pub fn show_team_settings_page_with_email_invite(
+        &mut self,
+        email_invite: Option<&String>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        self.show_settings_with_section(Some(SettingsSection::Teams), ctx);
+
+        self.settings_pane.update(ctx, |view, ctx| {
+            view.open_teams_page_email_invite(email_invite, ctx);
+        });
+    }
+
     /// Opens the MCP servers settings page, optionally triggering auto-install of a gallery MCP.
     pub fn open_mcp_servers_page(
         &mut self,
@@ -14880,7 +14569,7 @@ impl Workspace {
     }
 
     fn set_selected_object(&mut self, id: Option<WarpDriveItemId>, ctx: &mut ViewContext<Self>) {
-        // Set Zap drive index selected state
+        // Set Warp drive index selected state
         self.update_warp_drive_view(ctx, |drive_panel, ctx| {
             drive_panel.set_selected_object(id, ctx);
         });
@@ -14995,7 +14684,7 @@ impl Workspace {
                 let command = code.trim().to_string();
                 let args_state =
                     ArgumentsState::for_command_workflow(&Default::default(), command.clone());
-                let workflow = Workflow::new("Command from Zap AI", command)
+                let workflow = Workflow::new("Command from Warp AI", command)
                     .with_arguments(args_state.arguments);
                 self.run_workflow_in_active_input(
                     &WorkflowType::AIGenerated {
@@ -15020,18 +14709,45 @@ impl Workspace {
         }
     }
 
-    fn handle_zap_launch_modal_event(
+    fn handle_openwarp_launch_modal_event(
         &mut self,
-        event: &ZapLaunchModalEvent,
+        event: &OpenWarpLaunchModalEvent,
         ctx: &mut ViewContext<Self>,
     ) {
         match event {
-            ZapLaunchModalEvent::Close => {
+            OpenWarpLaunchModalEvent::Close => {
                 OneTimeModalModel::handle(ctx).update(ctx, |model, ctx| {
-                    model.mark_zap_launch_modal_dismissed(ctx);
+                    model.mark_openwarp_launch_modal_dismissed(ctx);
                 });
                 self.focus_active_tab(ctx);
                 ctx.notify();
+            }
+        }
+    }
+
+    fn handle_build_plan_migration_modal_event(
+        &mut self,
+        event: &BuildPlanMigrationModalEvent,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            BuildPlanMigrationModalEvent::Close => {
+                OneTimeModalModel::handle(ctx).update(ctx, |model, ctx| {
+                    model.mark_build_plan_migration_modal_dismissed(ctx);
+                });
+                self.focus_active_tab(ctx);
+                ctx.notify();
+            }
+            BuildPlanMigrationModalEvent::ShowToast { message, flavor } => {
+                use crate::view_components::{DismissibleToast, ToastFlavor};
+                self.toast_stack.update(ctx, |toast_stack, ctx| {
+                    let toast = match flavor {
+                        ToastFlavor::Success => DismissibleToast::success(message.clone()),
+                        ToastFlavor::Error => DismissibleToast::error(message.clone()),
+                        _ => DismissibleToast::error(message.clone()),
+                    };
+                    toast_stack.add_ephemeral_toast(toast, ctx);
+                });
             }
         }
     }
@@ -15239,6 +14955,68 @@ impl Workspace {
         }
     }
 
+    fn handle_free_tier_limit_modal_event(
+        &mut self,
+        event: &FreeTierLimitHitModalEvent,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            FreeTierLimitHitModalEvent::MaybeOpen => {
+                if self.free_tier_limit_check_triggered
+                    && self.check_and_open_free_tier_limit_modal(ctx)
+                {
+                    self.free_tier_limit_check_triggered = false;
+                }
+            }
+            FreeTierLimitHitModalEvent::Close => {
+                self.current_workspace_state
+                    .is_free_tier_limit_hit_modal_open = false;
+                GeneralSettings::handle(ctx).update(ctx, |settings, ctx| {
+                    if let Err(e) = settings
+                        .free_tier_limit_hit_modal_dismissed
+                        .set_value(true, ctx)
+                    {
+                        log::warn!("Failed to mark free tier limit hit modal as dismissed: {e}");
+                    }
+                });
+                self.focus_active_tab(ctx);
+                ctx.notify();
+            }
+        }
+    }
+
+    pub fn check_and_open_free_tier_limit_modal(&mut self, ctx: &mut ViewContext<Self>) -> bool {
+        let is_free_tier = !UserWorkspaces::as_ref(ctx)
+            .current_workspace()
+            .is_some_and(|workspace| workspace.billing_metadata.is_user_on_paid_plan());
+
+        if !is_free_tier {
+            return false;
+        }
+
+        if AIRequestUsageModel::as_ref(ctx).has_any_ai_remaining(ctx) {
+            return false;
+        }
+
+        if self
+            .current_workspace_state
+            .is_free_tier_limit_hit_modal_open
+            || *GeneralSettings::as_ref(ctx).free_tier_limit_hit_modal_dismissed
+        {
+            return false;
+        }
+
+        self.current_workspace_state
+            .is_free_tier_limit_hit_modal_open = true;
+
+        send_telemetry_from_ctx!(TelemetryEvent::FreeTierLimitHitInterstitialDisplayed, ctx);
+
+        ctx.focus(&self.free_tier_limit_hit_modal);
+        ctx.notify();
+
+        true
+    }
+
     fn ask_ai_assistant(&mut self, ask_type: &AskAIType, ctx: &mut ViewContext<Self>) {
         if !self.current_workspace_state.is_ai_assistant_panel_open {
             self.toggle_ai_assistant_panel(ctx);
@@ -15354,7 +15132,7 @@ impl Workspace {
         ctx.notify();
     }
 
-    // Zap:删除 open_shared_objects_creation_denied_modal(云端 Drive 配额拒绝弹窗)
+    // OpenWarp:删除 open_shared_objects_creation_denied_modal(云端 Drive 配额拒绝弹窗)
 
     /// Opens the workflow modal in the provided space and folder with no existing content (i.e. a new workflow modal).
     fn open_workflow_modal(
@@ -15372,7 +15150,7 @@ impl Workspace {
         let owner = match space {
             Space::Team { team_uid } => {
                 if !UserWorkspaces::has_capacity_for_shared_workflows(team_uid, ctx, 1) {
-                    // Zap:云端配额拒绝弹窗已删除,直接 return
+                    // OpenWarp:云端配额拒绝弹窗已删除,直接 return
                     return;
                 }
 
@@ -15403,7 +15181,7 @@ impl Workspace {
     fn open_workflow_with_existing(
         &mut self,
         workflow_id: SyncId,
-        settings: &ZapDriveObjectSettings,
+        settings: &OpenWarpDriveObjectSettings,
         ctx: &mut ViewContext<Self>,
     ) {
         let source = WorkflowOpenSource::Existing(workflow_id);
@@ -15423,7 +15201,7 @@ impl Workspace {
         };
         self.open_workflow_in_pane(
             &source,
-            &ZapDriveObjectSettings::default(),
+            &OpenWarpDriveObjectSettings::default(),
             WorkflowViewMode::Create,
             ctx,
         );
@@ -15444,7 +15222,7 @@ impl Workspace {
         };
         self.open_workflow_in_pane(
             &source,
-            &ZapDriveObjectSettings::default(),
+            &OpenWarpDriveObjectSettings::default(),
             WorkflowViewMode::Create,
             ctx,
         );
@@ -15510,7 +15288,7 @@ impl Workspace {
         let body = appearance
             .ui_builder()
             .wrappable_text(
-                "Ask Zap AI to explain errors, suggest commands or write scripts.".to_owned(),
+                "Ask Warp AI to explain errors, suggest commands or write scripts.".to_owned(),
                 true,
             )
             .with_style(UiComponentStyles {
@@ -15662,7 +15440,7 @@ impl Workspace {
                         .left_panel_views
                         .first()
                         .copied()
-                        .unwrap_or(ToolPanelView::ZapDrive)
+                        .unwrap_or(ToolPanelView::WarpDrive)
                     {
                         ToolPanelView::ProjectExplorer => {
                             crate::t!("workspace-left-panel-project-explorer")
@@ -15670,15 +15448,12 @@ impl Workspace {
                         ToolPanelView::GlobalSearch { .. } => {
                             crate::t!("workspace-left-panel-global-search")
                         }
-                        ToolPanelView::ZapDrive => crate::t!("workspace-left-panel-warp-drive"),
+                        ToolPanelView::WarpDrive => crate::t!("workspace-left-panel-warp-drive"),
                         ToolPanelView::ConversationListView => {
                             crate::t!("workspace-left-panel-agent-conversations")
                         }
                         ToolPanelView::SshManager => {
                             crate::t!("workspace-left-panel-ssh-manager")
-                        }
-                        ToolPanelView::ServerFileBrowser => {
-                            crate::t!("workspace-left-panel-server-file-browser")
                         }
                         ToolPanelView::SkillManager => {
                             crate::t!("workspace-left-panel-skill-manager")
@@ -15731,7 +15506,7 @@ impl Workspace {
                 .left_panel_views
                 .first()
                 .copied()
-                .unwrap_or(ToolPanelView::ZapDrive)
+                .unwrap_or(ToolPanelView::WarpDrive)
             {
                 ToolPanelView::ProjectExplorer => {
                     crate::t!("workspace-left-panel-project-explorer")
@@ -15739,15 +15514,12 @@ impl Workspace {
                 ToolPanelView::GlobalSearch { .. } => {
                     crate::t!("workspace-left-panel-global-search")
                 }
-                ToolPanelView::ZapDrive => crate::t!("workspace-left-panel-warp-drive"),
+                ToolPanelView::WarpDrive => crate::t!("workspace-left-panel-warp-drive"),
                 ToolPanelView::ConversationListView => {
                     crate::t!("workspace-left-panel-agent-conversations")
                 }
                 ToolPanelView::SshManager => {
                     crate::t!("workspace-left-panel-ssh-manager")
-                }
-                ToolPanelView::ServerFileBrowser => {
-                    crate::t!("workspace-left-panel-server-file-browser")
                 }
                 ToolPanelView::SkillManager => {
                     crate::t!("workspace-left-panel-skill-manager")
@@ -16057,7 +15829,7 @@ impl Workspace {
             .is_user_web_anonymous_user()
             .unwrap_or_default();
 
-        // Simplified mode for viewing Zap Drive objects, shared sessions, or conversation transcripts on WASM
+        // Simplified mode for viewing Warp Drive objects, shared sessions, or conversation transcripts on WASM
         #[cfg(target_family = "wasm")]
         if let Some(content_type) = self.get_simplified_wasm_tab_bar_content(ctx) {
             // Use MainAxisAlignment::SpaceBetween and expand to fill width
@@ -16066,10 +15838,10 @@ impl Workspace {
                 .with_main_axis_size(MainAxisSize::Max);
             let bg_color = blended_colors::neutral_1(appearance.theme());
 
-            // Left: Zap logo - clickable to link to warp.dev
+            // Left: Warp logo - clickable to link to warp.dev
             let warp_logo = Hoverable::new(self.mouse_states.warp_logo.clone(), |_state| {
                 ConstrainedBox::new(
-                    warp_core::ui::Icon::Zap
+                    warp_core::ui::Icon::Warp
                         .to_warpui_icon(appearance.theme().foreground())
                         .finish(),
                 )
@@ -16084,10 +15856,17 @@ impl Workspace {
             .finish();
             tab_bar.add_child(warp_logo);
 
-            // Right: Info button + run history button (for agent sessions) + "Open in Zap" button
+            // Right: Info button + "View all cloud runs" button (for ambient agent sessions) + "Open in Warp" button
             let mut right_row = Flex::row()
                 .with_cross_axis_alignment(CrossAxisAlignment::Center)
                 .with_main_axis_size(MainAxisSize::Min);
+
+            // Extract task_id from conversation transcripts and shared sessions
+            let task_id = match content_type {
+                SimplifiedWasmTabBarContent::ConversationTranscript { task_id }
+                | SimplifiedWasmTabBarContent::SharedSession { task_id } => task_id,
+                SimplifiedWasmTabBarContent::WarpDriveObject => None,
+            };
 
             // Show info button for conversation transcripts and shared sessions (if there's content to display)
             let should_show_info_button =
@@ -16106,9 +15885,18 @@ impl Workspace {
                         .with_margin_right(8.)
                         .finish(),
                 );
+
+                // Add "View all cloud runs" button when task_id exists (with 4px gap)
+                if task_id.is_some() {
+                    right_row.add_child(
+                        Container::new(ChildView::new(&self.view_cloud_runs_button).finish())
+                            .with_margin_right(4.)
+                            .finish(),
+                    );
+                }
             }
 
-            // Hide "Open in Zap" button on mobile devices
+            // Hide "Open in Warp" button on mobile devices
             if !warpui::platform::wasm::is_mobile_device() {
                 right_row.add_child(ChildView::new(&self.open_in_warp_button).finish());
             }
@@ -16210,7 +15998,13 @@ impl Workspace {
             .finish();
         } else {
             // Copy from our saved tab_bar_state to ensure all tabs get rendered with the same state
-            let active_tab_index = Some(self.active_tab_index);
+            let active_tab_index = if FeatureFlag::AgentManagementView.is_enabled()
+                && self.current_workspace_state.is_agent_management_view_open
+            {
+                None
+            } else {
+                Some(self.active_tab_index)
+            };
 
             let drag_model = CrossWindowTabDrag::as_ref(ctx);
             let tab_bar_state = TabBarState {
@@ -16500,12 +16294,30 @@ impl Workspace {
                     .finish(),
             );
         } else {
-            // 去中心化分支:不再渲染 Zap Essentials(灯泡)按钮,只保留设置齿轮。
+            // 去中心化分支:不再渲染 Warp Essentials(灯泡)按钮,只保留设置齿轮。
             target.add_child(
                 Container::new(self.render_settings_button(appearance))
                     .with_margin_left(TAB_BAR_PADDING_LEFT)
                     .finish(),
             );
+        }
+
+        if self.auth_state.is_anonymous_or_logged_out()
+            && !FeatureFlag::OpenWarpNewSettingsModes.is_enabled()
+        {
+            if is_web_anonymous_user {
+                target.add_child(
+                    Container::new(self.render_web_anonymous_user_sign_in_button(appearance))
+                        .with_margin_left(8.)
+                        .finish(),
+                );
+            } else {
+                target.add_child(
+                    Container::new(self.render_anonymous_sign_up_user_button(appearance))
+                        .with_margin_left(8.)
+                        .finish(),
+                );
+            }
         }
 
         let zoom_factor = WindowSettings::as_ref(ctx).zoom_level.as_zoom_factor();
@@ -16889,6 +16701,92 @@ impl Workspace {
                 false,
             )
             .finish(),
+        )
+        .finish()
+    }
+
+    fn render_web_anonymous_user_sign_in_button(
+        &self,
+        appearance: &Appearance,
+    ) -> Box<dyn Element> {
+        let default_styles = UiComponentStyles {
+            font_color: Some(appearance.theme().active_ui_text_color().into()),
+            font_size: Some(12.),
+            font_weight: Some(Weight::Light),
+            font_family_id: Some(appearance.ui_font_family()),
+            border_color: None,
+            border_radius: Some(CornerRadius::with_all(Radius::Pixels(5.))),
+            border_width: Some(1.),
+            width: Some(80.),
+            height: Some(24.),
+            ..Default::default()
+        };
+        let hovered_styles = UiComponentStyles {
+            font_color: Some(appearance.theme().accent().into()),
+            border_color: Some(appearance.theme().accent().into()),
+            ..default_styles
+        };
+        let button = appearance
+            .ui_builder()
+            .button_with_custom_styles(
+                ButtonVariant::Text,
+                self.mouse_states.sign_in_button.clone(),
+                default_styles,
+                Some(hovered_styles),
+                Some(hovered_styles),
+                None,
+            )
+            .with_centered_text_label(String::from("Sign up"));
+
+        Align::new(
+            button
+                .build()
+                .on_click(|_ctx, _, _| {
+                    // 去中心化分支:`SignInAnonymousWebUser` dispatch 已删除。
+                })
+                .finish(),
+        )
+        .finish()
+    }
+
+    fn render_anonymous_sign_up_user_button(&self, appearance: &Appearance) -> Box<dyn Element> {
+        let default_styles = UiComponentStyles {
+            font_color: Some(appearance.theme().active_ui_text_color().into()),
+            font_size: Some(12.),
+            font_weight: Some(Weight::Semibold),
+            font_family_id: Some(appearance.ui_font_family()),
+            border_color: Some(appearance.theme().active_ui_text_color().into()),
+            border_radius: Some(CornerRadius::with_all(Radius::Pixels(5.))),
+            border_width: Some(1.),
+            width: Some(80.),
+            height: Some(24.),
+            ..Default::default()
+        };
+        let hovered_styles = UiComponentStyles {
+            font_color: Some(appearance.theme().accent().into()),
+            border_color: Some(appearance.theme().accent().into()),
+            ..default_styles
+        };
+
+        let button = appearance
+            .ui_builder()
+            .button_with_custom_styles(
+                ButtonVariant::Text,
+                self.mouse_states.sign_up_button.clone(),
+                default_styles,
+                Some(hovered_styles),
+                Some(hovered_styles),
+                None,
+            )
+            .with_centered_text_label(String::from("Sign up"));
+
+        Align::new(
+            button
+                .build()
+                .on_click(|_ctx, _, _| {
+                    // 去中心化分支:Sign up 按钮 dispatch 已删除。
+                })
+                .finish(),
         )
         .finish()
     }
@@ -18018,10 +17916,6 @@ impl Workspace {
             context.set.insert(flags::LEGACY_SSH_WRAPPER_CONTEXT_FLAG);
         }
 
-        if *ssh_settings.enable_ssh_auto_discovery.value() {
-            context.set.insert(flags::SSH_AUTO_DISCOVERY_CONTEXT_FLAG);
-        }
-
         if *warpify_settings.use_ssh_tmux_wrapper.value() {
             context.set.insert(flags::SSH_TMUX_WRAPPER_CONTEXT_FLAG);
         }
@@ -18317,7 +18211,7 @@ impl Workspace {
     fn process_updated_sync_state(&self, ctx: &mut ViewContext<Self>) {
         // If there is an active terminal, return a sync event that all
         // other synced terminals should apply to match it.
-        // If there is no active terminal (like when all Zap windows are
+        // If there is no active terminal (like when all Warp windows are
         // minimized), return an event to start syncing.
         let sync_event = self
             .active_tab_pane_group()
@@ -18366,8 +18260,41 @@ impl Workspace {
         self.tab_views().map(|tab| tab.id())
     }
 
-    fn focus_zap_launch_modal(&mut self, ctx: &mut ViewContext<Self>) {
-        ctx.focus(&self.zap_launch_modal);
+    fn team_uid(&self, app: &AppContext) -> Option<ServerId> {
+        // TODO this is a stop gap for now - ideally a specific team uid should
+        // be passed into each event
+        UserWorkspaces::as_ref(app).current_team_uid()
+    }
+
+    fn initiate_user_signup(
+        &mut self,
+        entrypoint: AnonymousUserSignupEntrypoint,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if self.auth_state.is_user_anonymous().unwrap_or_default() {
+            // User has an anonymous local account, so use the linking flow.
+            AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
+                auth_manager.initiate_anonymous_user_linking(entrypoint, ctx);
+            });
+        } else {
+            // User is fully logged out, so open the regular sign-up page.
+            AuthManager::handle(ctx).update(ctx, |auth_manager, ctx| {
+                let sign_up_url = auth_manager.sign_up_url();
+                ctx.open_url(&sign_up_url);
+            });
+        }
+        self.require_login_modal.update(ctx, |auth_modal, ctx| {
+            auth_modal.skip_to_browser_open_step(ctx);
+        });
+        self.open_require_login_modal(AuthViewVariant::RequireLoginCloseable, ctx);
+    }
+
+    fn focus_openwarp_launch_modal(&mut self, ctx: &mut ViewContext<Self>) {
+        ctx.focus(&self.openwarp_launch_modal);
+    }
+
+    fn focus_build_plan_migration_modal(&mut self, ctx: &mut ViewContext<Self>) {
+        ctx.focus(&self.build_plan_migration_modal);
     }
 
     fn open_left_panel_view(&mut self, action: &LeftPanelAction, ctx: &mut ViewContext<Self>) {
@@ -18421,14 +18348,17 @@ impl Workspace {
                 entry_focus: GlobalSearchEntryFocus::Results,
             });
         }
-        if WarpDriveSettings::is_warp_drive_enabled(ctx) {
-            views.push(ToolPanelView::ZapDrive);
-        }
+        // unwarp Phase 0: Drive panel hidden from UI. The backend is dead
+        // (sentinel URL routes nowhere) and the panel slot is reserved for
+        // VaultPanel (TDD §5.5). The drive module itself stays compiled
+        // until Phase 2 builds VaultPanel; deleting it now would cascade
+        // through workspace/view.rs, cloud_object/, and ~19 other files.
+        // Original (pre-rebrand):
+        //     if WarpDriveSettings::is_warp_drive_enabled(ctx) {
+        //         views.push(ToolPanelView::WarpDrive);
+        //     }
         // openWarp 独有:SSH 管理器,无 feature flag,默认始终显示。
         views.push(ToolPanelView::SshManager);
-        if FeatureFlag::ServerFileBrowser.is_enabled() && FeatureFlag::SshRemoteServer.is_enabled() {
-            views.push(ToolPanelView::ServerFileBrowser);
-        }
         // openWarp 独有:Skill 管理器,无 feature flag,local_fs 构建下默认显示。
         if cfg!(feature = "local_fs") {
             views.push(ToolPanelView::SkillManager);
@@ -18446,7 +18376,7 @@ impl Workspace {
         });
     }
 
-    /// Opens a given URL in the desktop Zap app if installed, or redirects to download page.
+    /// Opens a given URL in the desktop Warp app if installed, or redirects to download page.
     #[cfg(target_family = "wasm")]
     fn open_link_on_desktop(&mut self, url: &Url, ctx: &mut ViewContext<Self>) {
         use crate::settings::app_installation_detection::{
@@ -18469,7 +18399,7 @@ impl Workspace {
             // Many users' browser settings will block Local Network Access so this will end up redirecting to download page,
             // even if they have the app installed.
             let toast_message = format!(
-                "Have Zap installed but redirecting to download page?\nEnable Local Network Access for the Zap web launcher in your browser."
+                "Have OpenWarp installed but redirecting to download page?\nEnable Local Network Access for the OpenWarp web launcher in your browser."
             );
             self.toast_stack.update(ctx, |toast_stack, ctx| {
                 toast_stack.add_persistent_toast(DismissibleToast::default(toast_message), ctx)
@@ -18588,7 +18518,7 @@ impl TypedActionView for Workspace {
                     // (add_terminal_tab applies DefaultSessionMode::Agent internally).
                     DefaultSessionMode::Terminal
                     | DefaultSessionMode::Agent
-                    | DefaultSessionMode::AmbientAgent => {
+                    | DefaultSessionMode::CloudAgent => {
                         if FeatureFlag::WelcomeTab.is_enabled() {
                             self.add_welcome_tab(ctx);
                         } else {
@@ -18617,7 +18547,6 @@ impl TypedActionView for Workspace {
             }
             AddGetStartedTab => self.add_get_started_tab(ctx),
             AddAgentTab => self.add_terminal_tab_with_new_agent_view(ctx),
-            AddSpecificAgentTab(agent) => self.add_tab_with_specific_agent(*agent, ctx),
             AddDockerSandboxTab => self.add_docker_sandbox_tab(ctx),
             StartAgentOnboardingTutorial(tutorial) => {
                 self.start_agent_onboarding_tutorial(tutorial.clone(), ctx)
@@ -18847,8 +18776,6 @@ impl TypedActionView for Workspace {
             SendFeedback => self.send_feedback(ctx),
             #[cfg(not(target_family = "wasm"))]
             ViewLogs => self.view_logs(ctx),
-            #[cfg(not(target_family = "wasm"))]
-            ExportLogsToPath => self.export_logs_to_path(ctx),
             ChangeCursor(cursor) => self.change_cursor(*cursor, ctx),
             ToggleErrorUnderlining => self.toggle_error_underlining(ctx),
             ToggleSyntaxHighlighting => self.toggle_syntax_highlighting(ctx),
@@ -18892,6 +18819,12 @@ impl TypedActionView for Workspace {
                     self.open_import_modal(personal_drive, &None, ctx);
                 }
             }
+            ImportToTeamDrive => {
+                let team_uid = self.team_uid(ctx);
+                if let Some(team_uid) = team_uid {
+                    self.open_import_modal(Owner::Team { team_uid }, &None, ctx);
+                }
+            }
             CreatePersonalNotebook => {
                 if let Some(personal_drive) = UserWorkspaces::as_ref(ctx).personal_drive(ctx) {
                     self.open_notebook(
@@ -18900,10 +18833,27 @@ impl TypedActionView for Workspace {
                             owner: personal_drive,
                             initial_folder_id: None,
                         },
-                        &ZapDriveObjectSettings::default(),
+                        &OpenWarpDriveObjectSettings::default(),
                         ctx,
                         true,
                     );
+                }
+            }
+            CreateTeamNotebook => {
+                let team_uid = self.team_uid(ctx);
+                if let Some(team_uid) = team_uid {
+                    self.update_warp_drive_view(ctx, |drive_panel, ctx| {
+                        drive_panel.open_cloud_object_dialog(
+                            DriveObjectType::Notebook {
+                                is_ai_document: false,
+                            },
+                            Space::Team { team_uid },
+                            None,
+                            ctx,
+                        );
+                    });
+                    self.current_workspace_state.is_warp_drive_open = true;
+                    ctx.notify();
                 }
             }
             CreatePersonalEnvVarCollection => {
@@ -18919,6 +18869,21 @@ impl TypedActionView for Workspace {
                     );
                 }
             }
+            CreateTeamEnvVarCollection => {
+                let team_uid = self.team_uid(ctx);
+                if let Some(team_uid) = team_uid {
+                    self.update_warp_drive_view(ctx, |drive_panel, ctx| {
+                        drive_panel.open_cloud_object_dialog(
+                            DriveObjectType::EnvVarCollection,
+                            Space::Team { team_uid },
+                            None,
+                            ctx,
+                        );
+                    });
+                    self.current_workspace_state.is_warp_drive_open = true;
+                    ctx.notify();
+                }
+            }
             CreatePersonalWorkflow => {
                 if let Some(personal_drive) = UserWorkspaces::as_ref(ctx).personal_drive(ctx) {
                     let source = WorkflowOpenSource::New {
@@ -18930,7 +18895,25 @@ impl TypedActionView for Workspace {
                     };
                     self.open_workflow_in_pane(
                         &source,
-                        &ZapDriveObjectSettings::default(),
+                        &OpenWarpDriveObjectSettings::default(),
+                        WorkflowViewMode::Create,
+                        ctx,
+                    );
+                }
+            }
+            CreateTeamWorkflow => {
+                let team_uid = self.team_uid(ctx);
+                if let Some(team_uid) = team_uid {
+                    let source = WorkflowOpenSource::New {
+                        title: None,
+                        content: None,
+                        owner: Owner::Team { team_uid },
+                        initial_folder_id: None,
+                        is_for_agent_mode: false,
+                    };
+                    self.open_workflow_in_pane(
+                        &source,
+                        &OpenWarpDriveObjectSettings::default(),
                         WorkflowViewMode::Create,
                         ctx,
                     );
@@ -18948,6 +18931,21 @@ impl TypedActionView for Workspace {
                 self.current_workspace_state.is_warp_drive_open = true;
                 ctx.notify();
             }
+            CreateTeamFolder => {
+                let team_uid = self.team_uid(ctx);
+                if let Some(team_uid) = team_uid {
+                    self.update_warp_drive_view(ctx, |drive_panel, ctx| {
+                        drive_panel.open_cloud_object_dialog(
+                            DriveObjectType::Folder,
+                            Space::Team { team_uid },
+                            None,
+                            ctx,
+                        );
+                    });
+                    self.current_workspace_state.is_warp_drive_open = true;
+                    ctx.notify();
+                }
+            }
             ToggleMouseReporting => self.toggle_mouse_reporting(ctx),
             ToggleScrollReporting => self.toggle_scroll_reporting(ctx),
             ToggleFocusReporting => self.toggle_focus_reporting(ctx),
@@ -18956,9 +18954,9 @@ impl TypedActionView for Workspace {
                 self.finish_tab_rename(ctx);
                 self.current_workspace_state.is_tab_being_dragged = true;
             }
-            ZapDrive => {
+            OpenWarpDrive => {
                 if WarpDriveSettings::is_warp_drive_enabled(ctx) {
-                    self.open_left_panel_view(&LeftPanelAction::ZapDrive, ctx);
+                    self.open_left_panel_view(&LeftPanelAction::WarpDrive, ctx);
                 }
             }
             ToggleLeftPanel => {
@@ -18996,7 +18994,7 @@ impl TypedActionView for Workspace {
                             ctx
                         );
                     } else if warp_drive_active {
-                        // Tools panel opened with Zap Drive as the active view
+                        // Tools panel opened with Warp Drive as the active view
                         send_telemetry_from_ctx!(
                             TelemetryEvent::WarpDriveOpened {
                                 source: WarpDriveSource::LeftPanelToolbelt,
@@ -19212,6 +19210,8 @@ impl TypedActionView for Workspace {
                 );
                 ctx.notify();
             }
+            ToggleAgentManagementView => {}
+            ViewAgentRunsForEnvironment { environment_id: _ } => {}
             ClosePanel => {
                 if self.left_panel_view.is_self_or_child_focused(ctx) {
                     self.close_left_panel(ctx);
@@ -19427,14 +19427,14 @@ impl TypedActionView for Workspace {
                 send_telemetry_from_ctx!(TelemetryEvent::DisableInputSync, ctx);
             }
             // 去中心化分支:`Reauth` 已删除。
-            // 去中心化分支:云端账号注册 / 登录动作已删除。
+            // 去中心化分支:`SignupAnonymousUser` / `SignInAnonymousWebUser` 已删除。
             HandleConflictingWorkflow(workflow_id) => {
                 self.toast_stack.update(ctx, |view, ctx| {
                     view.dismiss_older_toasts(&workflow_id.uid(), ctx);
                 });
                 self.open_workflow_with_existing(
                     *workflow_id,
-                    &ZapDriveObjectSettings::default(),
+                    &OpenWarpDriveObjectSettings::default(),
                     ctx,
                 );
             }
@@ -19536,7 +19536,7 @@ impl TypedActionView for Workspace {
             #[cfg(all(enable_crash_recovery, target_os = "linux"))]
             DismissWaylandCrashRecoveryBannerAndOpenLink => {
                 self.dismiss_workspace_banner(ctx, &WorkspaceBanner::WaylandCrashRecovery);
-                ctx.open_url("");
+                ctx.open_url("https://docs.warp.dev/terminal/more-features/linux#native-wayland");
             }
             FixInAgentMode { query } => {
                 self.active_tab_pane_group().update(ctx, |pane_group, ctx| {
@@ -19578,8 +19578,8 @@ impl TypedActionView for Workspace {
                     ctx
                 );
             }
-            // Zap Wave 7-3:`OpenEnvironmentManagementPane` WorkspaceAction handler 随
-            // ambient-agent UI 子系统物理删。
+            // OpenWarp Wave 7-3:`OpenEnvironmentManagementPane` WorkspaceAction handler 随
+            // Cloud Mode UI 子系统物理删。
             ToggleAIDocumentPane {
                 document_id,
                 document_version,
@@ -19716,7 +19716,7 @@ impl TypedActionView for Workspace {
             }
             OpenNotebook { id } => self.open_notebook(
                 &NotebookSource::Existing(*id),
-                &ZapDriveObjectSettings::default(),
+                &OpenWarpDriveObjectSettings::default(),
                 ctx,
                 true,
             ),
@@ -19866,7 +19866,25 @@ impl TypedActionView for Workspace {
                     };
                     self.open_workflow_in_pane(
                         &source,
-                        &ZapDriveObjectSettings::default(),
+                        &OpenWarpDriveObjectSettings::default(),
+                        WorkflowViewMode::Create,
+                        ctx,
+                    );
+                }
+            }
+            CreateTeamAIPrompt => {
+                let team_uid = self.team_uid(ctx);
+                if let Some(team_uid) = team_uid {
+                    let source = WorkflowOpenSource::New {
+                        title: None,
+                        content: None,
+                        owner: Owner::Team { team_uid },
+                        initial_folder_id: None,
+                        is_for_agent_mode: true,
+                    };
+                    self.open_workflow_in_pane(
+                        &source,
+                        &OpenWarpDriveObjectSettings::default(),
                         WorkflowViewMode::Create,
                         ctx,
                     );
@@ -19879,6 +19897,30 @@ impl TypedActionView for Workspace {
             #[cfg(feature = "local_fs")]
             FileDeleted { path } => {
                 self.close_tabs_with_file_path(path, ctx);
+            }
+            #[cfg(debug_assertions)]
+            OpenBuildPlanMigrationModal => {
+                // Force open the modal for debugging
+                OneTimeModalModel::handle(ctx).update(ctx, |model, ctx| {
+                    model.force_open_build_plan_migration_modal(ctx);
+                });
+                ctx.notify();
+            }
+            #[cfg(debug_assertions)]
+            ResetBuildPlanMigrationModalState => {
+                // Reset the dismissed state for debugging
+                let general_settings = GeneralSettings::handle(ctx);
+                general_settings.update(ctx, |settings, ctx| {
+                    if let Err(e) = settings
+                        .build_plan_migration_modal_dismissed
+                        .set_value(false, ctx)
+                    {
+                        log::warn!(
+                            "Failed to reset build plan migration modal dismissed setting: {e}"
+                        );
+                    }
+                });
+                log::info!("Build plan migration modal dismissed state has been reset");
             }
             #[cfg(debug_assertions)]
             DebugResetAwsBedrockLoginBannerDismissed => {
@@ -19896,35 +19938,35 @@ impl TypedActionView for Workspace {
                 log::info!("AWS Bedrock login banner dismissed state has been reset");
             }
             #[cfg(debug_assertions)]
-            OpenZapLaunchModal => {
-                // Force open the Zap launch modal for debugging
+            OpenOpenWarpLaunchModal => {
+                // Force open the OpenWarp launch modal for debugging
                 OneTimeModalModel::handle(ctx).update(ctx, |model, ctx| {
-                    model.force_open_zap_launch_modal(ctx);
+                    model.force_open_openwarp_launch_modal(ctx);
                 });
                 ctx.notify();
             }
             #[cfg(debug_assertions)]
-            ResetZapLaunchModalState => {
-                // Reset the Zap launch modal dismissed state for debugging
+            ResetOpenWarpLaunchModalState => {
+                // Reset the OpenWarp launch modal dismissed state for debugging
                 let old_value = *GeneralSettings::as_ref(ctx)
-                    .did_check_to_trigger_zap_launch_modal
+                    .did_check_to_trigger_openwarp_launch_modal
                     .value();
                 GeneralSettings::handle(ctx).update(ctx, |settings, ctx| {
                     if let Err(e) = settings
-                        .did_check_to_trigger_zap_launch_modal
+                        .did_check_to_trigger_openwarp_launch_modal
                         .set_value(false, ctx)
                     {
-                        log::warn!("Failed to reset Zap launch modal dismissed setting: {e}");
+                        log::warn!("Failed to reset OpenWarp launch modal dismissed setting: {e}");
                     }
                 });
                 let new_value = *GeneralSettings::as_ref(ctx)
-                    .did_check_to_trigger_zap_launch_modal
+                    .did_check_to_trigger_openwarp_launch_modal
                     .value();
                 log::info!(
-                    "Zap launch modal state: old={}, new={}, feature_flag_enabled={}",
+                    "OpenWarp launch modal state: old={}, new={}, feature_flag_enabled={}",
                     old_value,
                     new_value,
-                    FeatureFlag::ZapLaunchModal.is_enabled()
+                    FeatureFlag::OpenWarpLaunchModal.is_enabled()
                 );
             }
             #[cfg(debug_assertions)]
@@ -19993,10 +20035,29 @@ impl TypedActionView for Workspace {
                             Ok(Ok(output)) if output.status.success() => {
                                 ctx.open_file_path_in_explorer(Path::new(&output_path));
 
+                                #[cfg(feature = "crash_reporting")]
                                 if ChannelState::channel().is_dogfood() {
-                                    log::info!(
-                                        "openWarp: dev performance sample saved locally at {output_path}"
-                                    );
+                                    // For dogfood process samples, we raise a sentry warning with the sample attatched.
+                                    // We do this so that our performance bot can then read through the performance logs
+                                    // in sentry and write up a report of findings/possible optimizations.
+                                    if let Ok(sample_data) = fs::read(&output_path) {
+                                        let filename = Path::new(&output_path)
+                                            .file_name()
+                                            .map(|f| f.to_string_lossy().to_string())
+                                            .unwrap_or_else(|| "process_sample.txt".to_string());
+                                        let attachment = Attachment {
+                                            buffer: sample_data,
+                                            filename,
+                                            ty: Some(AttachmentType::Attachment),
+                                            ..Default::default()
+                                        };
+                                        // openWarp 闭源遥测剥离 P2:原会把 perf sample
+                                        // 作为 attachment 上报到 Warp 官方 Sentry,改本地 log。
+                                        let _ = attachment;
+                                        log::info!(
+                                            "openWarp: dev performance sample taken (上报已剥离,sample 仅本地)"
+                                        );
+                                    }
                                 }
 
                                 format!("Process sample saved to {output_path}")
@@ -20031,8 +20092,8 @@ impl TypedActionView for Workspace {
             ToggleWarpDrive => {
                 if WarpDriveSettings::is_warp_drive_enabled(ctx) {
                     let is_showing =
-                        self.left_panel_view.as_ref(ctx).active_view() == ToolPanelView::ZapDrive;
-                    self.toggle_left_panel_view(&LeftPanelAction::ZapDrive, is_showing, ctx);
+                        self.left_panel_view.as_ref(ctx).active_view() == ToolPanelView::WarpDrive;
+                    self.toggle_left_panel_view(&LeftPanelAction::WarpDrive, is_showing, ctx);
                 }
             }
             ToggleSshManager => {
@@ -20333,6 +20394,10 @@ impl View for Workspace {
             context.set.insert(flags::SHOW_GLOBAL_SEARCH);
         }
 
+        if self.team_uid(app).is_some() {
+            context.set.insert("WarpDrive_BelongsToTeam");
+        }
+
         if self.auth_state.is_anonymous_or_logged_out() {
             context.set.insert("IsAnonymousUser");
         }
@@ -20431,7 +20496,7 @@ impl View for Workspace {
 
         let tab_bar_mode = self.tab_bar_mode(app);
 
-        // For WASM simplified tab bar views (Zap Drive objects, shared sessions, conversation transcripts),
+        // For WASM simplified tab bar views (Warp Drive objects, shared sessions, conversation transcripts),
         // we render the tab bar outside of panels so that the details panel only affects content below the tab bar.
         cfg_if::cfg_if! {
             if #[cfg(target_family = "wasm")] {
@@ -20816,7 +20881,7 @@ impl View for Workspace {
                 }
             }
 
-            // Action sidecar for actionable items (Terminal, Agent, Ambient Agent, tab configs).
+            // Action sidecar for actionable items (Terminal, Agent, Cloud Oz, tab configs).
             if let Some(sidecar_item) = &self.tab_config_action_sidecar_item {
                 let anchor_label = self.new_session_dropdown_menu.read(app, |menu, _| {
                     menu.hovered_index().and_then(|idx| {
@@ -21046,8 +21111,8 @@ impl View for Workspace {
         let one_time_modal_model = OneTimeModalModel::as_ref(app);
         let should_show_modal = one_time_modal_model.target_window_id() == Some(self.window_id);
 
-        if should_show_modal && one_time_modal_model.is_zap_launch_modal_open() {
-            stack.add_child(ChildView::new(&self.zap_launch_modal).finish());
+        if should_show_modal && one_time_modal_model.is_openwarp_launch_modal_open() {
+            stack.add_child(ChildView::new(&self.openwarp_launch_modal).finish());
         }
 
         if let Some(hoa_flow) = &self.hoa_onboarding_flow {
@@ -21166,8 +21231,19 @@ impl View for Workspace {
             }
         }
 
+        if should_show_modal && one_time_modal_model.is_build_plan_migration_modal_open() {
+            stack.add_child(ChildView::new(&self.build_plan_migration_modal).finish());
+        }
+
         if self.current_workspace_state.is_codex_modal_open {
             stack.add_child(ChildView::new(&self.codex_modal).finish());
+        }
+
+        if self
+            .current_workspace_state
+            .is_free_tier_limit_hit_modal_open
+        {
+            stack.add_child(ChildView::new(&self.free_tier_limit_hit_modal).finish());
         }
 
         if let Some(lightbox_view) = &self.lightbox_view {

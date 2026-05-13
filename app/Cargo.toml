@@ -1,7 +1,7 @@
 [package]
-authors = ["Zap Team"]
-default-run = "zap-oss"
-description = "The local-first agentic terminal"
+authors = ["Warp Team <dev@warp.dev>"]
+default-run = "unwarp"
+description = "The local-first terminal for individuals and teams"
 edition = "2021"
 autobins = false
 name = "warp"
@@ -17,7 +17,7 @@ path = "src/lib.rs"
 # 原 warp 多渠道发布的 dev/stable/preview/local bin 已删除。
 
 [[bin]]
-name = "zap-oss"
+name = "unwarp"
 path = "src/bin/zap_oss.rs"
 test = false
 
@@ -834,14 +834,14 @@ hoa_remote_control = []
 codex_notifications = []
 configurable_context_window = []
 
-[package.metadata.bundle.bin.zap-oss]
+[package.metadata.bundle.bin.unwarp]
 category = "public.app-category.developer-tools"
-copyright = "© 2025-2026, Zap"
-identifier = "dev.zap.Zap"
-name = "Zap"
+copyright = "© 2025-2026, unwarp"
+identifier = "dev.unwarp.unwarp"
+name = "unwarp"
 resources = ["assets/onboarding"]
-icon = ["channels/oss/icon/padded/512x512.png", "channels/oss/icon/padded/icon.ico"]
-short_description = "The open-source, local-first agentic terminal."
+icon = ["channels/oss/icon/no-padding/512x512.png", "channels/oss/icon/no-padding/icon.ico"]
+short_description = "Local-first terminal with Obsidian-backed RAG and Claude Code integration."
 
 [package.metadata.cargo-udeps.ignore]
 normal = ["embed_plist"]

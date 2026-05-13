@@ -8,11 +8,11 @@ fn test_data_dir_path() {
     // ChannelState, by default, is configured for Channel::Oss.
     cfg_if::cfg_if! {
         if #[cfg(target_os = "macos")] {
-            assert_eq!(data_dir(), home_dir.join(".zap"));
+            assert_eq!(data_dir(), home_dir.join(".openwarp"));
         } else if #[cfg(any(target_os = "linux", target_os = "freebsd"))] {
-            assert_eq!(data_dir(), home_dir.join(".local/share/zap"));
+            assert_eq!(data_dir(), home_dir.join(".local/share/openwarp"));
         } else if #[cfg(windows)] {
-            assert_eq!(data_dir(), home_dir.join("AppData\\Roaming\\zap\\Zap\\data"));
+            assert_eq!(data_dir(), home_dir.join("AppData\\Roaming\\openwarp\\OpenWarp\\data"));
         } else {
             unimplemented!("Need to update tests for current platform!");
         }
@@ -25,11 +25,11 @@ fn test_config_local_dir_path() {
     // ChannelState, by default, is configured for Channel::Oss.
     cfg_if::cfg_if! {
         if #[cfg(target_os = "macos")] {
-            assert_eq!(config_local_dir(), home_dir.join(".zap"));
+            assert_eq!(config_local_dir(), home_dir.join(".openwarp"));
         } else if #[cfg(any(target_os = "linux", target_os = "freebsd"))] {
-            assert_eq!(config_local_dir(), home_dir.join(".config/zap"));
+            assert_eq!(config_local_dir(), home_dir.join(".config/openwarp"));
         } else if #[cfg(windows)] {
-            assert_eq!(config_local_dir(), home_dir.join("AppData\\Local\\zap\\Zap\\config"));
+            assert_eq!(config_local_dir(), home_dir.join("AppData\\Local\\openwarp\\OpenWarp\\config"));
         } else {
             unimplemented!("Need to update tests for current platform!");
         }
@@ -40,8 +40,8 @@ fn test_config_local_dir_path() {
 fn test_warp_home_config_dir_path() {
     let home_dir = home_dir().expect("Should be able to compute home directory");
     let expected_dir_name = match ChannelState::data_profile() {
-        Some(data_profile) => format!(".zap-{data_profile}"),
-        None => ".zap".to_string(),
+        Some(data_profile) => format!(".openwarp-{data_profile}"),
+        None => ".openwarp".to_string(),
     };
 
     assert_eq!(
@@ -53,7 +53,7 @@ fn test_warp_home_config_dir_path() {
 #[test]
 fn test_warp_home_skills_and_mcp_paths() {
     let Some(config_dir) = warp_home_config_dir() else {
-        panic!("Should be able to compute Zap home config directory");
+        panic!("Should be able to compute Warp home config directory");
     };
 
     assert_eq!(warp_home_skills_dir(), Some(config_dir.join("skills")));
@@ -68,11 +68,11 @@ fn test_cache_dir_path() {
     // ChannelState, by default, is configured for Channel::Oss.
     cfg_if::cfg_if! {
         if #[cfg(target_os = "macos")] {
-            assert_eq!(cache_dir(), home_dir.join("Library/Application Support/dev.zap.Zap"));
+            assert_eq!(cache_dir(), home_dir.join("Library/Application Support/dev.openwarp.OpenWarp"));
         } else if #[cfg(any(target_os = "linux", target_os = "freebsd"))] {
-            assert_eq!(cache_dir(), home_dir.join(".cache/zap"));
+            assert_eq!(cache_dir(), home_dir.join(".cache/openwarp"));
         } else if #[cfg(windows)] {
-            assert_eq!(cache_dir(), home_dir.join("AppData\\Local\\zap\\Zap\\cache"));
+            assert_eq!(cache_dir(), home_dir.join("AppData\\Local\\openwarp\\OpenWarp\\cache"));
         } else {
             unimplemented!("Need to update tests for current platform!");
         }
@@ -85,11 +85,11 @@ fn test_state_dir_path() {
     cfg_if::cfg_if! {
         // ChannelState, by default, is configured for Channel::Oss.
         if #[cfg(target_os = "macos")] {
-            assert_eq!(state_dir(), home_dir.join("Library/Application Support/dev.zap.Zap"));
+            assert_eq!(state_dir(), home_dir.join("Library/Application Support/dev.openwarp.OpenWarp"));
         } else if #[cfg(any(target_os = "linux", target_os = "freebsd"))] {
-            assert_eq!(state_dir(), home_dir.join(".local/state/zap"));
+            assert_eq!(state_dir(), home_dir.join(".local/state/openwarp"));
         } else if #[cfg(windows)] {
-            assert_eq!(state_dir(), home_dir.join("AppData\\Local\\zap\\Zap\\data"));
+            assert_eq!(state_dir(), home_dir.join("AppData\\Local\\openwarp\\OpenWarp\\data"));
         } else {
             unimplemented!("Need to update tests for current platform!");
         }
@@ -98,25 +98,39 @@ fn test_state_dir_path() {
 
 #[test]
 fn test_oss_secure_state_dir_is_disabled() {
-    // ChannelState 默认是 Channel::Oss。Zap 不应该探测 Zap 官方 App Group,
+    // ChannelState 默认是 Channel::Oss。OpenWarp 不应该探测 Warp 官方 App Group,
     // 否则 macOS 会把它识别成访问其他 App 数据并在每次启动时弹权限窗。
     assert_eq!(secure_state_dir(), None);
 }
 
 #[test]
-fn test_project_path_for_zap_dev_app_id() {
-    // Covers the `starts_with("Zap")` branch in `project_dirs_for_app_id` on Linux,
-    // which maps suffixed application names like `ZapDev` to a dashed lowercase
-    // directory matching the Linux package name (e.g. `zap-dev`).
-    let project_dirs = project_dirs_for_app_id(AppId::new("dev", "zap", "ZapDev"), None)
+fn test_project_path_for_warp_app_id() {
+    let project_dirs = project_dirs_for_app_id(AppId::new("dev", "warp", "Warp"), None)
         .expect("should be able to compute project dirs");
     cfg_if::cfg_if! {
         if #[cfg(target_os = "macos")] {
-            assert_eq!(project_dirs.project_path(), "dev.zap.ZapDev");
+            assert_eq!(project_dirs.project_path(), "dev.warp.Warp");
         } else if #[cfg(any(target_os = "linux", target_os = "freebsd"))] {
-            assert_eq!(project_dirs.project_path(), "zap-dev");
+            assert_eq!(project_dirs.project_path(), "warp-terminal");
         } else if #[cfg(windows)] {
-            assert_eq!(project_dirs.project_path(), "zap\\ZapDev");
+            assert_eq!(project_dirs.project_path(), "warp\\Warp");
+        } else {
+            unimplemented!("Need to update tests for current platform!");
+        }
+    }
+}
+
+#[test]
+fn test_project_path_for_warp_dev_app_id() {
+    let project_dirs = project_dirs_for_app_id(AppId::new("dev", "warp", "WarpDev"), None)
+        .expect("should be able to compute project dirs");
+    cfg_if::cfg_if! {
+        if #[cfg(target_os = "macos")] {
+            assert_eq!(project_dirs.project_path(), "dev.warp.WarpDev");
+        } else if #[cfg(any(target_os = "linux", target_os = "freebsd"))] {
+            assert_eq!(project_dirs.project_path(), "warp-terminal-dev");
+        } else if #[cfg(windows)] {
+            assert_eq!(project_dirs.project_path(), "warp\\WarpDev");
         } else {
             unimplemented!("Need to update tests for current platform!");
         }
@@ -125,15 +139,15 @@ fn test_project_path_for_zap_dev_app_id() {
 
 #[test]
 fn test_project_path_for_oss_app_id() {
-    let project_dirs = project_dirs_for_app_id(AppId::new("dev", "zap", "Zap"), None)
+    let project_dirs = project_dirs_for_app_id(AppId::new("dev", "unwarp", "unwarp"), None)
         .expect("should be able to compute project dirs");
     cfg_if::cfg_if! {
         if #[cfg(target_os = "macos")] {
-            assert_eq!(project_dirs.project_path(), "dev.zap.Zap");
+            assert_eq!(project_dirs.project_path(), "dev.unwarp.unwarp");
         } else if #[cfg(any(target_os = "linux", target_os = "freebsd"))] {
-            assert_eq!(project_dirs.project_path(), "zap");
+            assert_eq!(project_dirs.project_path(), "unwarp");
         } else if #[cfg(windows)] {
-            assert_eq!(project_dirs.project_path(), "zap\\Zap");
+            assert_eq!(project_dirs.project_path(), "unwarp\\unwarp");
         } else {
             unimplemented!("Need to update tests for current platform!");
         }

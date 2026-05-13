@@ -5,17 +5,17 @@
 use anyhow::Result;
 use warp_core::{
     channel::{Channel, ChannelConfig, ChannelState},
-    features::DEBUG_FLAGS,
+    features::{FeatureFlag, DEBUG_FLAGS},
     AppId,
 };
 
-// Zap OSS 构建的入口,简单包一层 warp::run()。
+// Simple wrapper around warp::run() for Warp OSS builds.
 fn main() -> Result<()> {
     let mut state = ChannelState::new(
         Channel::Oss,
         ChannelConfig {
-            app_id: AppId::new("dev", "zap", "Zap"),
-            logfile_name: "zap.log".into(),
+            app_id: AppId::new("dev", "unwarp", "unwarp"),
+            logfile_name: "unwarp.log".into(),
             autoupdate_config: None,
             mcp_static_config: None,
         },
@@ -24,11 +24,10 @@ fn main() -> Result<()> {
         state = state.with_additional_features(DEBUG_FLAGS);
     }
     // 始终启用 IME marked-text 渲染:winit 的 IME 路径在 macOS / Windows 都支持,
-    // 但若不在此处显式开启,Zap 会把 preedit / 输入合成更新整体丢弃,只剩 OS 的候选窗
+    // 但若不在此处显式开启,Warp 会把 preedit / 输入合成更新整体丢弃,只剩 OS 的候选窗
     // 可见 —— 在 Windows 上对日文 / 中文 / 韩文输入都属于实质性损坏。
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
-        use warp_core::features::FeatureFlag;
         state = state.with_additional_features(&[FeatureFlag::ImeMarkedText]);
     }
     ChannelState::set(state);
@@ -46,11 +45,11 @@ embed_plist::embed_info_plist_bytes!(r#"
     <key>CFBundleDevelopmentRegion</key>
     <string>English</string>
     <key>CFBundleDisplayName</key>
-    <string>Zap</string>
+    <string>unwarp</string>
     <key>CFBundleExecutable</key>
-    <string>zap-oss</string>
+    <string>unwarp</string>
     <key>CFBundleIdentifier</key>
-    <string>dev.zap.Zap</string>
+    <string>dev.unwarp.unwarp</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleLocalizations</key>
@@ -60,7 +59,7 @@ embed_plist::embed_info_plist_bytes!(r#"
     <string>zh-CN</string>
     </array>
     <key>CFBundleName</key>
-    <string>Zap</string>
+    <string>unwarp</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -72,9 +71,9 @@ embed_plist::embed_info_plist_bytes!(r#"
     <key>UIDesignRequiresCompatibility</key>
     <true/>
     <key>CFBundleURLTypes</key>
-    <array><dict><key>CFBundleURLName</key><string>Custom App</string><key>CFBundleURLSchemes</key><array><string>zap</string></array></dict></array>
+    <array><dict><key>CFBundleURLName</key><string>Custom App</string><key>CFBundleURLSchemes</key><array><string>unwarp</string></array></dict></array>
     <key>NSHumanReadableCopyright</key>
-    <string>© 2026, Zap</string>
+    <string>© 2026, Denver Technologies, Inc</string>
     </dict>
     </plist>
 "#.as_bytes());

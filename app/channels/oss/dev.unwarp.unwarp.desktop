@@ -1,0 +1,23 @@
+[Desktop Entry]
+# The version of the desktop entry spec this conforms to.
+Version=1.0
+
+Type=Application
+
+Name=unwarp
+GenericName=TerminalEmulator
+
+Exec=unwarp %U
+StartupWMClass=dev.unwarp.unwarp
+
+Keywords=shell;prompt;command;commandline;cmd;
+
+Icon=dev.unwarp.unwarp
+
+Categories=System;TerminalEmulator;
+
+# Don't run this application within a terminal.
+Terminal=false
+
+# Register ourselves as the handler for unwarp:// URLs.
+MimeType=x-scheme-handler/unwarp;
