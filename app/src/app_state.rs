@@ -314,6 +314,7 @@ pub enum LeftPanelDisplayedTab {
     SshManager,
     ServerFileBrowser,
     SkillManager,
+    OllamaMonitor,
 }
 
 impl From<ToolPanelView> for LeftPanelDisplayedTab {
@@ -326,6 +327,7 @@ impl From<ToolPanelView> for LeftPanelDisplayedTab {
             ToolPanelView::SshManager => LeftPanelDisplayedTab::SshManager,
             ToolPanelView::ServerFileBrowser => LeftPanelDisplayedTab::ServerFileBrowser,
             ToolPanelView::SkillManager => LeftPanelDisplayedTab::SkillManager,
+            ToolPanelView::OllamaMonitor => LeftPanelDisplayedTab::OllamaMonitor,
         }
     }
 }
