@@ -30,6 +30,7 @@ use crate::pane_group::{PaneGroup, WorkingDirectoriesEvent, WorkingDirectoriesMo
 use crate::server::telemetry::CodePanelsFileOpenEntrypoint;
 use crate::server::telemetry::{FileTreeSource, WarpDriveSource};
 use crate::settings_view::keybindings::{KeybindingChangedEvent, KeybindingChangedNotifier};
+use crate::ollama_panel::OllamaPanel;
 use crate::skill_manager::{SkillManagerPanel, SkillManagerPanelEvent};
 use crate::ssh_manager::SshManagerPanel;
 #[cfg(feature = "local_fs")]
@@ -45,10 +46,11 @@ use crate::workspace::view::global_search::view::{
 };
 use crate::workspace::view::{
     LEFT_PANEL_AGENT_CONVERSATIONS_BINDING_NAME, LEFT_PANEL_GLOBAL_SEARCH_BINDING_NAME,
-    LEFT_PANEL_PROJECT_EXPLORER_BINDING_NAME, LEFT_PANEL_SKILL_MANAGER_BINDING_NAME,
-    LEFT_PANEL_SSH_MANAGER_BINDING_NAME, LEFT_PANEL_WARP_DRIVE_BINDING_NAME,
-    OPEN_GLOBAL_SEARCH_BINDING_NAME, TOGGLE_CONVERSATION_LIST_VIEW_BINDING_NAME,
-    TOGGLE_PROJECT_EXPLORER_BINDING_NAME, TOGGLE_WARP_DRIVE_BINDING_NAME,
+    LEFT_PANEL_OLLAMA_MONITOR_BINDING_NAME, LEFT_PANEL_PROJECT_EXPLORER_BINDING_NAME,
+    LEFT_PANEL_SKILL_MANAGER_BINDING_NAME, LEFT_PANEL_SSH_MANAGER_BINDING_NAME,
+    LEFT_PANEL_WARP_DRIVE_BINDING_NAME, OPEN_GLOBAL_SEARCH_BINDING_NAME,
+    TOGGLE_CONVERSATION_LIST_VIEW_BINDING_NAME, TOGGLE_PROJECT_EXPLORER_BINDING_NAME,
+    TOGGLE_WARP_DRIVE_BINDING_NAME,
 };
 use crate::{
     appearance::Appearance,
@@ -76,6 +78,7 @@ struct MouseStateHandles {
     conversation_list_view_button: MouseStateHandle,
     ssh_manager_button: MouseStateHandle,
     skill_manager_button: MouseStateHandle,
+    ollama_monitor_button: MouseStateHandle,
 }
 
 #[derive(Clone, Debug)]
@@ -86,6 +89,7 @@ pub enum LeftPanelAction {
     ConversationListView,
     SshManager,
     SkillManager,
+    OllamaMonitor,
 }
 
 pub enum LeftPanelEvent {
@@ -128,6 +132,7 @@ pub enum ToolPanelView {
     ConversationListView,
     SshManager,
     SkillManager,
+    OllamaMonitor,
 }
 
 /// Encapsulates the active view state to enforce that all mutations go through
@@ -196,6 +201,7 @@ pub struct LeftPanelView {
     conversation_list_view: ViewHandle<ConversationListView>,
     ssh_manager_view: ViewHandle<SshManagerPanel>,
     skill_manager_view: ViewHandle<SkillManagerPanel>,
+    ollama_monitor_view: ViewHandle<OllamaPanel>,
     active_view: active_view_state::ActiveViewState,
     toolbelt_buttons: Vec<ToolbeltButtonConfig>,
     active_pane_group: Option<WeakViewHandle<PaneGroup>>,
@@ -242,6 +248,7 @@ impl LeftPanelView {
         let conversation_list_view = ctx.add_typed_action_view(ConversationListView::new);
         let ssh_manager_view = ctx.add_typed_action_view(SshManagerPanel::new);
         let skill_manager_view = ctx.add_typed_action_view(SkillManagerPanel::new);
+        let ollama_monitor_view = ctx.add_typed_action_view(OllamaPanel::new);
         ctx.subscribe_to_view(&ssh_manager_view, |_me, _, event, ctx| {
             use crate::ssh_manager::SshManagerPanelEvent;
             match event {
@@ -372,6 +379,7 @@ impl LeftPanelView {
             conversation_list_view,
             ssh_manager_view,
             skill_manager_view,
+            ollama_monitor_view,
             active_view: active_view_state::new(active_view),
             toolbelt_buttons,
             active_pane_group: None,
@@ -525,6 +533,18 @@ impl LeftPanelView {
                     active_icon: None,
                     tooltip_text: crate::t!("workspace-left-panel-skill-manager"),
                     action: LeftPanelAction::SkillManager,
+                    render_with_active_state: false,
+                    tooltip_keybinding: toolbelt_tooltip_keybinding(&tooltip_keybinding_names, ctx),
+                    tooltip_keybinding_names,
+                }
+            }
+            ToolPanelView::OllamaMonitor => {
+                let tooltip_keybinding_names = vec![LEFT_PANEL_OLLAMA_MONITOR_BINDING_NAME];
+                ToolbeltButtonConfig {
+                    icon: Icon::Lightning,
+                    active_icon: None,
+                    tooltip_text: crate::t!("workspace-left-panel-ollama-monitor"),
+                    action: LeftPanelAction::OllamaMonitor,
                     render_with_active_state: false,
                     tooltip_keybinding: toolbelt_tooltip_keybinding(&tooltip_keybinding_names, ctx),
                     tooltip_keybinding_names,
@@ -778,6 +798,9 @@ impl LeftPanelView {
             ToolPanelView::SkillManager => {
                 ctx.focus(&self.skill_manager_view);
             }
+            ToolPanelView::OllamaMonitor => {
+                ctx.focus(&self.ollama_monitor_view);
+            }
         }
     }
 
@@ -934,6 +957,9 @@ impl LeftPanelView {
                 LeftPanelAction::SkillManager => {
                     self.active_view.get() == ToolPanelView::SkillManager
                 }
+                LeftPanelAction::OllamaMonitor => {
+                    self.active_view.get() == ToolPanelView::OllamaMonitor
+                }
             };
         }
     }
@@ -1081,6 +1107,9 @@ impl LeftPanelView {
             LeftPanelAction::SkillManager => {
                 active_view_state::set(self, ToolPanelView::SkillManager, ctx);
             }
+            LeftPanelAction::OllamaMonitor => {
+                active_view_state::set(self, ToolPanelView::OllamaMonitor, ctx);
+            }
         }
     }
 
@@ -1182,6 +1211,7 @@ impl View for LeftPanelView {
                 ToolPanelView::ConversationListView => ctx.focus(&self.conversation_list_view),
                 ToolPanelView::SshManager => ctx.focus(&self.ssh_manager_view),
                 ToolPanelView::SkillManager => ctx.focus(&self.skill_manager_view),
+                ToolPanelView::OllamaMonitor => ctx.focus(&self.ollama_monitor_view),
             }
         }
     }
@@ -1198,6 +1228,7 @@ impl View for LeftPanelView {
                 .clone(),
             self.mouse_state_handles.ssh_manager_button.clone(),
             self.mouse_state_handles.skill_manager_button.clone(),
+            self.mouse_state_handles.ollama_monitor_button.clone(),
         ];
 
         // If there is only one button in the toolbelt row,
@@ -1267,6 +1298,14 @@ impl View for LeftPanelView {
             ToolPanelView::SkillManager => Shrinkable::new(
                 1.0,
                 Container::new(ChildView::new(&self.skill_manager_view).finish())
+                    .with_padding_left(2.)
+                    .with_padding_right(2.)
+                    .finish(),
+            )
+            .finish(),
+            ToolPanelView::OllamaMonitor => Shrinkable::new(
+                1.0,
+                Container::new(ChildView::new(&self.ollama_monitor_view).finish())
                     .with_padding_left(2.)
                     .with_padding_right(2.)
                     .finish(),

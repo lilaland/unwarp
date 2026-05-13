@@ -64,6 +64,7 @@ mod pricing;
 mod profiling;
 mod projects;
 mod prompt;
+mod ollama_panel;
 mod quit_warning;
 mod rag;
 #[allow(dead_code)]

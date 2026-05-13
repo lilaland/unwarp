@@ -589,6 +589,8 @@ pub(crate) const LEFT_PANEL_AGENT_CONVERSATIONS_BINDING_NAME: &str =
     "workspace:left_panel_agent_conversations";
 pub(crate) const LEFT_PANEL_SSH_MANAGER_BINDING_NAME: &str = "workspace:left_panel_ssh_manager";
 pub(crate) const LEFT_PANEL_SKILL_MANAGER_BINDING_NAME: &str = "workspace:left_panel_skill_manager";
+pub(crate) const LEFT_PANEL_OLLAMA_MONITOR_BINDING_NAME: &str =
+    "workspace:left_panel_ollama_monitor";
 
 const KEYBINDINGS_TO_CACHE: [&str; 4] = [
     ASK_AI_ASSISTANT_KEYBINDING_NAME,
@@ -3552,6 +3554,7 @@ impl Workspace {
                 LeftPanelDisplayedTab::ConversationListView => ToolPanelView::ConversationListView,
                 LeftPanelDisplayedTab::SshManager => ToolPanelView::SshManager,
                 LeftPanelDisplayedTab::SkillManager => ToolPanelView::SkillManager,
+                LeftPanelDisplayedTab::OllamaMonitor => ToolPanelView::OllamaMonitor,
             };
             lp.restore_active_view_from_snapshot(active_view, ctx);
             lp.set_active_pane_group(pane_group.clone(), &self.working_directories_model, ctx);
@@ -15458,6 +15461,9 @@ impl Workspace {
                         ToolPanelView::SkillManager => {
                             crate::t!("workspace-left-panel-skill-manager")
                         }
+                        ToolPanelView::OllamaMonitor => {
+                            crate::t!("workspace-left-panel-ollama-monitor")
+                        }
                     }
                 } else {
                     crate::t!("workspace-tools-panel-tooltip")
@@ -15523,6 +15529,9 @@ impl Workspace {
                 }
                 ToolPanelView::SkillManager => {
                     crate::t!("workspace-left-panel-skill-manager")
+                }
+                ToolPanelView::OllamaMonitor => {
+                    crate::t!("workspace-left-panel-ollama-monitor")
                 }
             }
         } else {
@@ -18363,6 +18372,8 @@ impl Workspace {
         if cfg!(feature = "local_fs") {
             views.push(ToolPanelView::SkillManager);
         }
+        // unwarp Phase 1: Ollama monitoring panel, no feature flag, always visible.
+        views.push(ToolPanelView::OllamaMonitor);
         views
     }
 

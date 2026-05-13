@@ -300,6 +300,7 @@ pub enum LeftPanelDisplayedTab {
     ConversationListView,
     SshManager,
     SkillManager,
+    OllamaMonitor,
 }
 
 impl From<ToolPanelView> for LeftPanelDisplayedTab {
@@ -311,6 +312,7 @@ impl From<ToolPanelView> for LeftPanelDisplayedTab {
             ToolPanelView::ConversationListView => LeftPanelDisplayedTab::ConversationListView,
             ToolPanelView::SshManager => LeftPanelDisplayedTab::SshManager,
             ToolPanelView::SkillManager => LeftPanelDisplayedTab::SkillManager,
+            ToolPanelView::OllamaMonitor => LeftPanelDisplayedTab::OllamaMonitor,
         }
     }
 }
