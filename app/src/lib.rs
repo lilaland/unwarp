@@ -65,6 +65,7 @@ mod profiling;
 mod projects;
 mod prompt;
 mod quit_warning;
+mod rag;
 #[allow(dead_code)]
 mod remote_server;
 mod resource_limits;

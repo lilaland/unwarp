@@ -38,7 +38,7 @@ use super::{
     BlockVisibilitySettings, CodeSettings, DebugSettings, EmacsBindingsSettings, FontSettings,
     FontSettingsChangedEvent, GPUSettings, InputBoxType, InputModeSettings, InputSettings,
     PaneSettings, SameLinePromptBlockSettings, ScrollSettings, SelectionSettings, SshSettings,
-    ThemeSettings, VimBannerSettings, WarpDrivePrivacySettings,
+    ThemeSettings, UnwarpSettings, VimBannerSettings, WarpDrivePrivacySettings,
 };
 
 pub struct UserDefaultsOnStartup {
@@ -72,6 +72,7 @@ pub fn register_all_settings(ctx: &mut AppContext) {
     GPUSettings::register(ctx);
     GeneralSettings::register(ctx);
     AISettings::register_and_subscribe_to_events(ctx);
+    UnwarpSettings::register(ctx);
     // OpenWarp Wave 7-3:`CloudAgentSettings` 随 Cloud Mode UI 子系统物理删。
     ScrollSettings::register(ctx);
     SelectionSettings::register(ctx);
