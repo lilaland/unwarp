@@ -22,6 +22,7 @@ pub mod layout;
 pub mod lock;
 pub mod manager;
 pub mod markdown_view;
+pub mod mirror;
 
 // Re-exports — VaultManagerEvent and VaultState are consumed by the
 // vault explorer panel landing in the next commit; allow until then.
