@@ -71,6 +71,9 @@ pub enum VaultPanelAction {
     /// User clicked "Re-index all" — drops all vectors and re-embeds every
     /// vault note + recent command blocks from scratch.
     ReIndexAll,
+    /// User clicked "New note" — creates an empty note in `vault/notes/`
+    /// and opens it for editing.
+    NewNote,
 }
 
 /// Events VaultPanel emits to its parent (the LeftPanelView).
@@ -90,6 +93,7 @@ pub struct VaultPanel {
     cta_mouse_state: MouseStateHandle,
     run_jobs_button_state: MouseStateHandle,
     reindex_button_state: MouseStateHandle,
+    new_note_button_state: MouseStateHandle,
     /// True while the manual "Run jobs" pair is in flight.
     jobs_running: bool,
     /// True while "Re-index all" is running.
@@ -148,6 +152,7 @@ impl VaultPanel {
             cta_mouse_state: MouseStateHandle::default(),
             run_jobs_button_state: MouseStateHandle::default(),
             reindex_button_state: MouseStateHandle::default(),
+            new_note_button_state: MouseStateHandle::default(),
             jobs_running: false,
             indexing: false,
             last_run_summary: None,
@@ -290,6 +295,31 @@ impl VaultPanel {
         }
     }
 
+    /// Create a new blank note in `vault/notes/`, named after the current
+    /// timestamp, then open it for editing.
+    fn create_new_note(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(root) = self.vault.as_ref(ctx).vault_root().map(|p| p.to_path_buf()) else {
+            return;
+        };
+        let notes_dir = root.join("notes");
+        if !notes_dir.is_dir() {
+            if let Err(e) = std::fs::create_dir_all(&notes_dir) {
+                log::warn!("vault: cannot create notes dir: {e}");
+                return;
+            }
+        }
+        let stem = chrono::Local::now().format("%Y-%m-%d-%H%M%S").to_string();
+        let path = notes_dir.join(format!("{stem}.md"));
+        if let Err(e) = std::fs::write(&path, "") {
+            log::warn!("vault: cannot create note {}: {e}", path.display());
+            return;
+        }
+        ctx.emit(VaultPanelEvent::OpenFile {
+            path,
+            is_read_only: false,
+        });
+    }
+
     /// Drop all vectors and re-embed vault notes + recent command blocks
     /// from scratch. Runs in the background; shows a spinner while in flight.
     fn run_reindex(&mut self, ctx: &mut ViewContext<Self>) {
@@ -346,6 +376,7 @@ impl TypedActionView for VaultPanel {
                     self.run_reindex(ctx);
                 }
             }
+            VaultPanelAction::NewNote => self.create_new_note(ctx),
         }
     }
 }
@@ -597,12 +628,36 @@ impl VaultPanel {
                 .finish()
         };
 
+        // "New note" button — always active.
+        let new_note_text = Text::new_inline(
+            "New note".to_owned(),
+            appearance.ui_font_family(),
+            BODY_FONT_SIZE,
+        )
+        .with_color(theme.accent().into())
+        .finish();
+
+        let new_note_body = Container::new(new_note_text)
+            .with_padding_top(CTA_VERTICAL_PADDING)
+            .with_padding_bottom(CTA_VERTICAL_PADDING)
+            .finish();
+
+        let new_note_button = Hoverable::new(self.new_note_button_state.clone(), move |_| {
+            new_note_body
+        })
+        .on_click(move |ctx, _, _| {
+            ctx.dispatch_typed_action(VaultPanelAction::NewNote);
+        })
+        .with_cursor(Cursor::PointingHand)
+        .finish();
+
         let mut header = Flex::column()
             .with_cross_axis_alignment(CrossAxisAlignment::Start)
             .with_main_axis_size(MainAxisSize::Min)
             .with_child(Container::new(heading).with_padding_bottom(4.0).finish())
             .with_child(button)
-            .with_child(reindex_button);
+            .with_child(reindex_button)
+            .with_child(new_note_button);
 
         if let Some(summary) = &self.last_run_summary {
             let status = Text::new_inline(
