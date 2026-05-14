@@ -366,7 +366,15 @@ windows-registry = { workspace = true }
 windows-result = { workspace = true }
 winreg.workspace = true
 
+[[bench]]
+name = "rag"
+harness = false
+
 [dev-dependencies]
+criterion.workspace = true
+persistence.workspace = true
+diesel = { workspace = true, features = ["sqlite"] }
+diesel_migrations = { version = "2.2.0", features = ["sqlite"] }
 ai = { workspace = true, features = ["test-util"] }
 async-process.workspace = true
 jsonschema = { workspace = true, default-features = false }

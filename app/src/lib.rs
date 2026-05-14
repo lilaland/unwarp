@@ -66,7 +66,7 @@ mod projects;
 mod prompt;
 mod ollama_panel;
 mod quit_warning;
-mod rag;
+pub mod rag;
 #[allow(dead_code)]
 mod vault;
 #[allow(dead_code)]

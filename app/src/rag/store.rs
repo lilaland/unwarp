@@ -37,6 +37,13 @@ fn ensure_vec_loaded() {
     });
 }
 
+/// Register the sqlite-vec extension as an auto-extension for all subsequent
+/// SQLite connections in this process. Must be called before any connection
+/// that creates or queries vec0 virtual tables. Idempotent.
+pub fn init_sqlite_vec() {
+    ensure_vec_loaded();
+}
+
 // ── Error ─────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Error)]
