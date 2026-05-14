@@ -364,6 +364,26 @@ pub static EXPORT_TO_FILE: LazyLock<StaticCommand> = LazyLock::new(|| StaticComm
     argument: Some(Argument::optional().with_hint_text(t_static!("slash-cmd-export-to-file-hint"))),
 });
 
+// ── unwarp Phase 3: RAG slash commands ───────────────────────────────────────
+
+pub static VAULT_SEARCH: LazyLock<StaticCommand> = LazyLock::new(|| StaticCommand {
+    name: "/search",
+    description: "Search vault notes and command history (RAG)",
+    icon_path: "bundled/svg/search.svg",
+    availability: Availability::LOCAL,
+    auto_enter_ai_mode: false,
+    argument: Some(Argument::required().with_hint_text("query")),
+});
+
+pub static VAULT_DOCS: LazyLock<StaticCommand> = LazyLock::new(|| StaticCommand {
+    name: "/docs",
+    description: "Search vault documentation and notes (RAG)",
+    icon_path: "bundled/svg/book-open.svg",
+    availability: Availability::LOCAL,
+    auto_enter_ai_mode: false,
+    argument: Some(Argument::required().with_hint_text("query")),
+});
+
 pub static COMMAND_REGISTRY: LazyLock<Registry> = LazyLock::new(Registry::new);
 
 /// A unique identifier for a static slash command.
@@ -488,6 +508,12 @@ fn all_commands() -> Vec<StaticCommand> {
 
     if !cfg!(target_family = "wasm") {
         commands.extend([EDIT.clone(), EXPORT_TO_FILE.clone()]);
+    }
+
+    #[cfg(feature = "local_fs")]
+    {
+        commands.push(VAULT_SEARCH.clone());
+        commands.push(VAULT_DOCS.clone());
     }
 
     if FeatureFlag::ListSkills.is_enabled() && !cfg!(target_family = "wasm") {
