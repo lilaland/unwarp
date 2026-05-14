@@ -6,6 +6,8 @@
 //!
 //! `IndexReport` aggregates the outcome of a single indexer run.
 
+pub mod command_blocks;
+pub mod conversations;
 pub mod vault_notes;
 
 use thiserror::Error;
