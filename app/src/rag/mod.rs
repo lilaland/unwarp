@@ -12,6 +12,7 @@
 
 pub mod chunk;
 pub mod embed;
+pub mod index;
 pub mod query;
 pub mod redact;
 pub mod store;
