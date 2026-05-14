@@ -825,6 +825,51 @@ impl Input {
                 // of handling user queries with specific slash command prefixes.
                 return false;
             }
+            // ── unwarp RAG commands ───────────────────────────────────────────
+            vault_search if command.name == commands::VAULT_SEARCH.name => {
+                #[cfg(feature = "local_fs")]
+                {
+                    let Some(query) = argument else {
+                        let window_id = ctx.window_id();
+                        ToastStack::handle(ctx).update(ctx, |ts, ctx| {
+                            ts.add_ephemeral_toast(
+                                DismissibleToast::error(
+                                    "Please provide a search query after /search".to_owned(),
+                                ),
+                                window_id,
+                                ctx,
+                            );
+                        });
+                        return true;
+                    };
+                    let kinds = vec![
+                        crate::rag::query::HitKind::VaultNote,
+                        crate::rag::query::HitKind::CommandBlock,
+                        crate::rag::query::HitKind::Message,
+                    ];
+                    self.handle_rag_search(query, kinds, ctx);
+                }
+            }
+            vault_docs if command.name == commands::VAULT_DOCS.name => {
+                #[cfg(feature = "local_fs")]
+                {
+                    let Some(query) = argument else {
+                        let window_id = ctx.window_id();
+                        ToastStack::handle(ctx).update(ctx, |ts, ctx| {
+                            ts.add_ephemeral_toast(
+                                DismissibleToast::error(
+                                    "Please provide a search query after /docs".to_owned(),
+                                ),
+                                window_id,
+                                ctx,
+                            );
+                        });
+                        return true;
+                    };
+                    let kinds = vec![crate::rag::query::HitKind::VaultNote];
+                    self.handle_rag_search(query, kinds, ctx);
+                }
+            }
             _ => {
                 debug_assert!(
                     false,
@@ -872,6 +917,88 @@ impl Input {
             ctx
         );
         true
+    }
+
+    /// Runs an async RAG search and shows results as an ephemeral message.
+    #[cfg(feature = "local_fs")]
+    fn handle_rag_search(
+        &mut self,
+        query: &str,
+        kinds: Vec<crate::rag::query::HitKind>,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        use crate::persistence::database_file_path;
+        use crate::rag::{embed::EmbedClientConfig, query::RagQuery};
+
+        let db_path = database_file_path();
+        let embed_config = EmbedClientConfig::default();
+        let Ok(rag) = RagQuery::new(&db_path, embed_config) else {
+            let window_id = ctx.window_id();
+            ToastStack::handle(ctx).update(ctx, |ts, ctx| {
+                ts.add_ephemeral_toast(
+                    DismissibleToast::error("RAG search unavailable (DB path error)".to_owned()),
+                    window_id,
+                    ctx,
+                );
+            });
+            return;
+        };
+
+        let query = query.to_owned();
+
+        // Show a loading indicator while the embed + search runs.
+        self.ephemeral_message_model.update(ctx, |model, ctx| {
+            model.show_ephemeral_message(
+                EphemeralMessage::new(
+                    Message::from_text("Searching\u{2026}"),
+                    DismissalStrategy::UntilExplicitlyDismissed,
+                ),
+                ctx,
+            );
+        });
+
+        let _ = ctx.spawn(
+            async move { rag.search(&query, &kinds).await },
+            |this, result, ctx| {
+                use crate::rag::query::HitKind;
+
+                let message = match result {
+                    Ok(hits) => {
+                        if hits.is_empty() {
+                            Message::from_text("No results found.")
+                        } else {
+                            let mut lines = format!("{} result(s):\n", hits.len().min(5));
+                            for (i, hit) in hits.iter().enumerate().take(5) {
+                                let label = match hit.kind {
+                                    HitKind::VaultNote => "vault",
+                                    HitKind::CommandBlock => "cmd",
+                                    HitKind::Message => "chat",
+                                };
+                                let preview: String = hit
+                                    .chunk_text
+                                    .chars()
+                                    .take(100)
+                                    .collect::<String>()
+                                    .replace('\n', " ");
+                                lines.push_str(&format!("{}. [{}] {}\n", i + 1, label, preview));
+                            }
+                            Message::from_text(lines)
+                        }
+                    }
+                    Err(e) => Message::from_text(format!("Search error: {e}")),
+                };
+
+                this.ephemeral_message_model.update(ctx, |model, ctx| {
+                    model.show_ephemeral_message(
+                        EphemeralMessage::new(
+                            message,
+                            DismissalStrategy::UntilExplicitlyDismissed,
+                        ),
+                        ctx,
+                    );
+                });
+            },
+        );
     }
 
     /// Handles cmd+enter (Mac) / ctrl+enter (Linux/Windows) for slash commands.
