@@ -1043,6 +1043,10 @@ fn initialize_app(
     // are available (see workspace startup).
     ctx.add_singleton_model(crate::vault::VaultManager::new);
 
+    // unwarp Phase 4: RAG index manager — subscribes to VaultManager events
+    // and triggers incremental re-indexing on file changes.
+    ctx.add_singleton_model(crate::rag::index_manager::RagIndexManager::new);
+
     ctx.add_singleton_model(WarpConfig::new);
     ctx.add_singleton_model(|_ctx| SettingsManager::default());
 
