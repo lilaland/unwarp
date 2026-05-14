@@ -10,6 +10,9 @@
 //! - B-3: click-to-open routing and filesystem-watcher refresh
 
 pub mod panel;
+pub mod tree;
 
 #[allow(unused_imports)]
 pub use panel::{VaultPanel, VaultPanelAction};
+#[allow(unused_imports)]
+pub use tree::{VaultCategory, VaultEntry, VaultEntryKind};
