@@ -286,6 +286,32 @@ impl LeftPanelView {
                 });
             }
         });
+        #[cfg(feature = "local_fs")]
+        ctx.subscribe_to_view(&vault_explorer_view, |_me, _, event, ctx| {
+            use crate::vault::explorer::panel::VaultPanelEvent;
+            match event {
+                VaultPanelEvent::OpenFile { path } => {
+                    // Resolve the file target via the same helper FileTreeView
+                    // uses — markdown files route to MarkdownViewer when the
+                    // user prefers that, others to the configured code editor.
+                    let settings = EditorSettings::as_ref(ctx);
+                    let target = crate::util::openable_file_type::resolve_file_target_to_open_in_warp(
+                        path,
+                        settings,
+                        None,
+                    );
+                    ctx.emit(LeftPanelEvent::OpenFileWithTarget {
+                        path: path.clone(),
+                        target,
+                        line_col: None,
+                    });
+                }
+            }
+        });
+        // wasm / non-local_fs targets: vault explorer can still display the
+        // tree but click-to-open is a no-op (no FileTarget machinery available).
+        #[cfg(not(feature = "local_fs"))]
+        let _ = &vault_explorer_view;
 
         ctx.subscribe_to_view(&warp_drive_view, |_me, _, event, ctx| {
             ctx.emit(LeftPanelEvent::WarpDrive(event.clone()));
