@@ -10,6 +10,9 @@
 //! `VaultManager::create_new`. This is a stop-gap until the proper
 //! workspace first-run banner lands.
 
+use std::path::PathBuf;
+use std::time::Duration;
+
 use warpui::{
     elements::{
         Container, CrossAxisAlignment, Element, Flex, Hoverable, MainAxisSize, MouseStateHandle,
@@ -25,6 +28,12 @@ use crate::settings::UnwarpSettings;
 use crate::vault::manager::{VaultManager, VaultManagerEvent, VaultState};
 
 use super::tree::{walk_vault, VaultEntry, VaultEntryKind};
+
+/// How often the tree polls the filesystem for changes when the panel
+/// is open. Cheap (~ms for a vault-sized walk) so the interval can be
+/// short without measurable cost. Promoting to notify-based watching is
+/// a separate follow-up.
+const REFRESH_INTERVAL_SECS: u64 = 2;
 
 const PANEL_HORIZONTAL_PADDING: f32 = 12.0;
 const PANEL_VERTICAL_PADDING: f32 = 12.0;
@@ -43,12 +52,24 @@ pub enum VaultPanelAction {
     /// `~/Documents/unwarp-vault/`). Stop-gap until the proper first-run
     /// banner lands.
     CreateNew,
+    /// User clicked an entry row. Directory clicks are no-ops in v1
+    /// (no collapse/expand); file clicks emit `VaultPanelEvent::OpenFile`
+    /// for the workspace to route to the appropriate viewer.
+    OpenEntry(PathBuf),
+}
+
+/// Events VaultPanel emits to its parent (the LeftPanelView).
+#[derive(Clone, Debug)]
+pub enum VaultPanelEvent {
+    /// User clicked a file row. The path is absolute. The workspace
+    /// decides which viewer/editor to open based on file type.
+    OpenFile { path: PathBuf },
 }
 
 pub struct VaultPanel {
     vault: ModelHandle<VaultManager>,
-    /// Cached tree contents. Rebuilt on every `StateChanged` to `Ready`.
-    /// Empty when state != Ready.
+    /// Cached tree contents. Rebuilt on every `StateChanged` to `Ready`
+    /// and on each periodic poll. Empty when state != Ready.
     entries: Vec<VaultEntry>,
     cta_mouse_state: MouseStateHandle,
 }
@@ -79,11 +100,35 @@ impl VaultPanel {
                 ctx.notify();
             }
         });
-        Self {
+        let panel = Self {
             vault,
             entries,
             cta_mouse_state: MouseStateHandle::default(),
-        }
+        };
+        panel.schedule_refresh(ctx);
+        panel
+    }
+
+    /// Polling loop. Runs forever; on each tick re-walks the vault if the
+    /// manager is Ready and updates state when the entries change.
+    fn schedule_refresh(&self, ctx: &mut ViewContext<Self>) {
+        let _ = ctx.spawn(
+            async move {
+                tokio::time::sleep(Duration::from_secs(REFRESH_INTERVAL_SECS)).await;
+            },
+            |panel, _, ctx| {
+                if panel.vault.as_ref(ctx).is_ready() {
+                    if let Some(root) = panel.vault.as_ref(ctx).vault_root() {
+                        let next = walk_vault(root);
+                        if next != panel.entries {
+                            panel.entries = next;
+                            ctx.notify();
+                        }
+                    }
+                }
+                panel.schedule_refresh(ctx);
+            },
+        );
     }
 
     fn try_create_new(&mut self, ctx: &mut ViewContext<Self>) {
@@ -110,7 +155,7 @@ impl VaultPanel {
 }
 
 impl Entity for VaultPanel {
-    type Event = ();
+    type Event = VaultPanelEvent;
 }
 
 impl TypedActionView for VaultPanel {
@@ -119,7 +164,21 @@ impl TypedActionView for VaultPanel {
     fn handle_action(&mut self, action: &VaultPanelAction, ctx: &mut ViewContext<Self>) {
         match action {
             VaultPanelAction::CreateNew => self.try_create_new(ctx),
+            VaultPanelAction::OpenEntry(path) => self.open_entry(path.clone(), ctx),
         }
+    }
+}
+
+impl VaultPanel {
+    fn open_entry(&mut self, path: PathBuf, ctx: &mut ViewContext<Self>) {
+        // Directory clicks are a no-op in v1; expansion state would live
+        // here in a follow-up. Only files emit OpenFile.
+        if let Some(entry) = self.entries.iter().find(|e| e.path == path) {
+            if matches!(entry.kind, VaultEntryKind::Directory) {
+                return;
+            }
+        }
+        ctx.emit(VaultPanelEvent::OpenFile { path });
     }
 }
 
@@ -306,12 +365,34 @@ impl VaultPanel {
             .with_color(label_color.into())
             .finish();
 
-        Container::new(text)
+        let body = Container::new(text)
             .with_padding_left(ROW_HORIZONTAL_PADDING + indent)
             .with_padding_right(ROW_HORIZONTAL_PADDING)
             .with_padding_top(ROW_VERTICAL_SPACING)
             .with_padding_bottom(ROW_VERTICAL_SPACING)
-            .finish()
+            .finish();
+
+        // File rows are clickable; directory rows are not (no expand state
+        // in v1 — clicking does nothing). Use the entry's full path as the
+        // action payload.
+        let click_path = entry.path.clone();
+        let is_clickable = matches!(entry.kind, VaultEntryKind::File);
+        let mouse_state = MouseStateHandle::default();
+        let hoverable = Hoverable::new(mouse_state, move |_| body).with_cursor(if is_clickable {
+            Cursor::PointingHand
+        } else {
+            Cursor::Arrow
+        });
+
+        if is_clickable {
+            hoverable
+                .on_click(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(VaultPanelAction::OpenEntry(click_path.clone()));
+                })
+                .finish()
+        } else {
+            hoverable.finish()
+        }
     }
 
 }
