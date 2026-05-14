@@ -373,6 +373,24 @@ pub static VAULT_DOCS: LazyLock<StaticCommand> = LazyLock::new(|| StaticCommand 
     argument: Some(Argument::required().with_hint_text("query")),
 });
 
+pub static VAULT_CHAT: LazyLock<StaticCommand> = LazyLock::new(|| StaticCommand {
+    name: "/chat",
+    description: "Ask a question with RAG context from your vault",
+    icon_path: "bundled/svg/message-chat-circle.svg",
+    availability: Availability::LOCAL.union(Availability::AI_ENABLED),
+    auto_enter_ai_mode: true,
+    argument: Some(Argument::required().with_hint_text("question")),
+});
+
+pub static VAULT_SUGG: LazyLock<StaticCommand> = LazyLock::new(|| StaticCommand {
+    name: "/sugg",
+    description: "Show seed command suggestions from your vault corpus",
+    icon_path: "bundled/svg/stars-01.svg",
+    availability: Availability::LOCAL,
+    auto_enter_ai_mode: false,
+    argument: Some(Argument::optional().with_hint_text("filter")),
+});
+
 pub static COMMAND_REGISTRY: LazyLock<Registry> = LazyLock::new(Registry::new);
 
 /// A unique identifier for a static slash command.
@@ -503,6 +521,8 @@ fn all_commands() -> Vec<StaticCommand> {
     {
         commands.push(VAULT_SEARCH.clone());
         commands.push(VAULT_DOCS.clone());
+        commands.push(VAULT_CHAT.clone());
+        commands.push(VAULT_SUGG.clone());
     }
 
     if FeatureFlag::ListSkills.is_enabled() && !cfg!(target_family = "wasm") {
