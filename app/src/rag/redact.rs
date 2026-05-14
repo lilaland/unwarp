@@ -13,7 +13,7 @@
 //! 7. Credit card numbers (with Luhn validation, post-match)
 //! 8. High-entropy tokens ≥ 20 chars, Shannon entropy ≥ 4.5 bits (base64 alphabet)
 
-use regex::{Regex, RegexSet};
+use regex::Regex;
 use thiserror::Error;
 
 /// Patterns in priority order. Each tuple is (pattern, replacement).
@@ -213,7 +213,6 @@ fn shannon_entropy(token: &str) -> f64 {
 /// with `[TOKEN_REDACTED]`.
 fn entropy_redact(text: &str, threshold: f64, min_len: usize) -> String {
     let mut result = String::with_capacity(text.len());
-    let mut iter = text.split_whitespace().peekable();
 
     // Reconstruct whitespace-delimited tokens from the original string.
     let mut pos = 0;
@@ -237,10 +236,6 @@ fn entropy_redact(text: &str, threshold: f64, min_len: usize) -> String {
     }
     // Preserve trailing whitespace/newlines
     result.push_str(&text[pos..]);
-
-    // Use the iterator-aware version for simplicity. The above is correct but
-    // let me verify the final implementation keeps trailing text.
-    let _ = iter; // silence warning
     result
 }
 

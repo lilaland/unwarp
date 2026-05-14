@@ -102,6 +102,7 @@ diesel::table! {
         is_local -> Nullable<Bool>,
         agent_view_visibility -> Nullable<Text>,
         git_branch_name -> Nullable<Text>,
+        redacted_output -> Nullable<Text>,
     }
 }
 
@@ -515,6 +516,97 @@ diesel::table! {
         value -> Text,
     }
 }
+
+
+// ── unwarp Phase 3: vault + RAG tables ──────────────────────────────────────
+
+diesel::table! {
+    vault_files (path) {
+        path         -> Text,
+        content_hash -> Nullable<Text>,
+        indexed_at   -> Nullable<Timestamp>,
+        chunk_count  -> Integer,
+    }
+}
+
+diesel::table! {
+    seed_commands (id) {
+        id          -> Integer,
+        command     -> Text,
+        description -> Nullable<Text>,
+        tags        -> Nullable<Text>,
+        source      -> Text,
+    }
+}
+
+diesel::table! {
+    unwarp_conversations (id) {
+        id           -> Text,
+        created_at   -> Timestamp,
+        updated_at   -> Timestamp,
+        title        -> Nullable<Text>,
+        context_path -> Nullable<Text>,
+    }
+}
+
+diesel::table! {
+    unwarp_messages (id) {
+        id              -> Text,
+        conversation_id -> Text,
+        role            -> Text,
+        content         -> Text,
+        created_at      -> Timestamp,
+    }
+}
+
+diesel::table! {
+    unwarp_conversation_blocks (id) {
+        id              -> Integer,
+        conversation_id -> Text,
+        block_id        -> Text,
+        added_at        -> Timestamp,
+    }
+}
+
+diesel::table! {
+    vault_note_chunks (rowid) {
+        rowid         -> Integer,
+        vault_file_id -> Text,
+        chunk_idx     -> Integer,
+        chunk_text    -> Text,
+    }
+}
+
+diesel::table! {
+    command_block_chunks (rowid) {
+        rowid      -> Integer,
+        block_id   -> Text,
+        chunk_idx  -> Integer,
+        chunk_text -> Text,
+    }
+}
+
+diesel::table! {
+    message_chunks (rowid) {
+        rowid      -> Integer,
+        message_id -> Text,
+        chunk_idx  -> Integer,
+        chunk_text -> Text,
+    }
+}
+
+diesel::joinable!(unwarp_messages -> unwarp_conversations (conversation_id));
+diesel::joinable!(unwarp_conversation_blocks -> unwarp_conversations (conversation_id));
+diesel::joinable!(vault_note_chunks -> vault_files (vault_file_id));
+diesel::joinable!(message_chunks -> unwarp_messages (message_id));
+
+diesel::allow_tables_to_appear_in_same_query!(
+    unwarp_conversations,
+    unwarp_messages,
+    unwarp_conversation_blocks,
+);
+diesel::allow_tables_to_appear_in_same_query!(vault_files, vault_note_chunks,);
+diesel::allow_tables_to_appear_in_same_query!(unwarp_messages, message_chunks,);
 
 diesel::joinable!(ambient_agent_panes -> pane_nodes (id));
 diesel::joinable!(app -> windows (active_window_id));

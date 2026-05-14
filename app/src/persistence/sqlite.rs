@@ -439,6 +439,15 @@ unsafe fn init_logging() {
 
 /// Determines the db path, establishes a connection and runs any migrations.
 pub(super) fn init_db() -> Result<SqliteConnection> {
+    // Register the sqlite-vec extension for all subsequent SQLite connections so
+    // that vec0 virtual tables are available before migrations run.
+    static VEC_LOADED: OnceLock<()> = OnceLock::new();
+    VEC_LOADED.get_or_init(|| unsafe {
+        sqlite3::sqlite3_auto_extension(Some(std::mem::transmute(
+            sqlite_vec::sqlite3_vec_init as *const (),
+        )));
+    });
+
     // First, make sure the parent directory of the file exists, otherwise
     // we'll get an error if the file doesn't already exist.
     let db_path = database_file_path();
