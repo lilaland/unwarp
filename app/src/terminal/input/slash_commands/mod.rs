@@ -856,6 +856,32 @@ impl Input {
                     self.handle_rag_search(query, kinds, ctx);
                 }
             }
+            vault_chat if command.name == commands::VAULT_CHAT.name => {
+                #[cfg(feature = "local_fs")]
+                {
+                    let Some(question) = argument else {
+                        let window_id = ctx.window_id();
+                        ToastStack::handle(ctx).update(ctx, |ts, ctx| {
+                            ts.add_ephemeral_toast(
+                                DismissibleToast::error(
+                                    "Please provide a question after /chat".to_owned(),
+                                ),
+                                window_id,
+                                ctx,
+                            );
+                        });
+                        return true;
+                    };
+                    self.handle_rag_chat(question, ctx);
+                }
+            }
+            vault_sugg if command.name == commands::VAULT_SUGG.name => {
+                #[cfg(feature = "local_fs")]
+                {
+                    let filter = argument.map(|s| s.as_str()).unwrap_or("").to_owned();
+                    self.handle_rag_sugg(&filter, ctx);
+                }
+            }
             _ => {
                 debug_assert!(
                     false,
@@ -980,6 +1006,172 @@ impl Input {
                             message,
                             DismissalStrategy::UntilExplicitlyDismissed,
                         ),
+                        ctx,
+                    );
+                });
+            },
+        );
+    }
+
+    /// RAG-augmented /chat: searches context, then launches agent view with an
+    /// augmented prompt (top-3 vault/command/message context chunks prepended).
+    #[cfg(feature = "local_fs")]
+    fn handle_rag_chat(&mut self, question: &str, ctx: &mut ViewContext<Self>) {
+        use crate::persistence::database_file_path;
+        use crate::rag::{
+            embed::EmbedClientConfig,
+            query::{HitKind, RagQuery},
+        };
+
+        let db_path = database_file_path();
+        let embed_config = EmbedClientConfig::default();
+        let Ok(rag) = RagQuery::new(&db_path, embed_config) else {
+            // Fall back to plain agent view if RAG is unavailable.
+            ctx.emit(Event::EnterAgentView {
+                initial_prompt: Some(question.to_owned()),
+                conversation_id: None,
+                origin: AgentViewEntryOrigin::SlashCommand { trigger: SlashCommandTrigger::input() },
+            });
+            return;
+        };
+
+        let question = question.to_owned();
+        let kinds = vec![HitKind::VaultNote, HitKind::CommandBlock, HitKind::Message];
+
+        self.ephemeral_message_model.update(ctx, |model, ctx| {
+            model.show_ephemeral_message(
+                EphemeralMessage::new(
+                    Message::from_text("Gathering context\u{2026}"),
+                    DismissalStrategy::UntilExplicitlyDismissed,
+                ),
+                ctx,
+            );
+        });
+
+        let _ = ctx.spawn(
+            async move { rag.search(&question, &kinds).await.map(|hits| (question, hits)) },
+            |this, result, ctx| {
+                let (_question, augmented_prompt) = match result {
+                    Ok((q, hits)) if !hits.is_empty() => {
+                        let context_block: String = hits
+                            .iter()
+                            .take(3)
+                            .map(|h| {
+                                let label = match h.kind {
+                                    HitKind::VaultNote => "vault",
+                                    HitKind::CommandBlock => "cmd",
+                                    HitKind::Message => "chat",
+                                };
+                                format!(
+                                    "[{}] {}\n",
+                                    label,
+                                    h.chunk_text.chars().take(200).collect::<String>()
+                                )
+                            })
+                            .collect();
+                        let prompt = format!(
+                            "Context from my vault:\n{context_block}\nQuestion: {q}"
+                        );
+                        (q, prompt)
+                    }
+                    Ok((q, _)) => (q.clone(), q),
+                    Err(_) => return,
+                };
+
+                this.ephemeral_message_model.update(ctx, |model, ctx| {
+                    model.clear_message(ctx);
+                });
+
+                ctx.emit(Event::EnterAgentView {
+                    initial_prompt: Some(augmented_prompt),
+                    conversation_id: None,
+                    origin: AgentViewEntryOrigin::SlashCommand {
+                        trigger: SlashCommandTrigger::input(),
+                    },
+                });
+            },
+        );
+    }
+
+    /// /sugg: shows seed command suggestions from the seed_commands table.
+    #[cfg(feature = "local_fs")]
+    fn handle_rag_sugg(&mut self, filter: &str, ctx: &mut ViewContext<Self>) {
+        use diesel::{
+            sql_query,
+            sql_types::Text,
+            sqlite::SqliteConnection,
+            Connection, RunQueryDsl,
+        };
+
+        use crate::persistence::database_file_path;
+
+        #[derive(diesel::QueryableByName)]
+        struct SeedRow {
+            #[diesel(sql_type = Text)]
+            command: String,
+            #[diesel(sql_type = diesel::sql_types::Nullable<Text>)]
+            description: Option<String>,
+        }
+
+        let db_path = database_file_path();
+        let filter = filter.to_owned();
+
+        let _ = ctx.spawn(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let url = db_path.to_str().unwrap_or("").to_owned();
+                    let mut conn = SqliteConnection::establish(&url)
+                        .map_err(|e| format!("db: {e}"))?;
+
+                    let rows: Vec<SeedRow> = if filter.is_empty() {
+                        sql_query(
+                            "SELECT command, description FROM seed_commands \
+                             ORDER BY source = 'builtin' DESC, id \
+                             LIMIT 10",
+                        )
+                        .load(&mut conn)
+                        .map_err(|e| format!("query: {e}"))?
+                    } else {
+                        sql_query(
+                            "SELECT command, description FROM seed_commands \
+                             WHERE command LIKE ? OR description LIKE ? \
+                             ORDER BY source = 'builtin' DESC, id \
+                             LIMIT 10",
+                        )
+                        .bind::<Text, _>(format!("%{filter}%"))
+                        .bind::<Text, _>(format!("%{filter}%"))
+                        .load(&mut conn)
+                        .map_err(|e| format!("query: {e}"))?
+                    };
+
+                    Ok::<_, String>(rows)
+                })
+                .await
+                .map_err(|e| format!("task: {e}"))?
+            },
+            |this, result: Result<Vec<SeedRow>, String>, ctx| {
+                let message = match result {
+                    Ok(rows) if rows.is_empty() => {
+                        Message::from_text("No seed commands found. Add commands to the seed_commands table.")
+                    }
+                    Ok(rows) => {
+                        let mut text = format!("{} suggestion(s):\n", rows.len());
+                        for row in &rows {
+                            let desc = row.description.as_deref().unwrap_or("");
+                            if desc.is_empty() {
+                                text.push_str(&format!("  {}\n", row.command));
+                            } else {
+                                text.push_str(&format!("  {}  — {}\n", row.command, desc));
+                            }
+                        }
+                        Message::from_text(text)
+                    }
+                    Err(e) => Message::from_text(format!("Error: {e}")),
+                };
+
+                this.ephemeral_message_model.update(ctx, |model, ctx| {
+                    model.show_ephemeral_message(
+                        EphemeralMessage::new(message, DismissalStrategy::UntilExplicitlyDismissed),
                         ctx,
                     );
                 });
