@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash($HOME/.cargo/bin/cargo build *)",
+      "Bash($HOME/.cargo/bin/cargo test *)"
+    ]
+  }
+}
