@@ -1,19 +1,27 @@
-//! `VaultManager` — singleton model that owns the vault lifecycle.
-//!
-//! Phase 2 scope: state machine, layout creation/adoption, lock ownership.
-//! No filesystem watcher and no UI subscriptions yet — those land with the
-//! vault explorer panel and mirror job in subsequent commits.
+//! `VaultManager` — singleton model that owns the vault lifecycle, including
+//! the notify-based filesystem watcher for vault and mirror-source trees.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 
 use thiserror::Error;
-use warpui::{Entity, ModelContext, SingletonEntity};
+use warpui::{Entity, ModelContext, ModelHandle, SingletonEntity};
+
+#[cfg(not(target_family = "wasm"))]
+use notify_debouncer_full::notify::{RecursiveMode, WatchFilter};
+#[cfg(not(target_family = "wasm"))]
+use watcher::{BulkFilesystemWatcher, BulkFilesystemWatcherEvent};
 
 use super::{
     config::{VaultConfig, VaultConfigError},
     layout::{ensure_layout, LayoutError},
     lock::{VaultLock, VaultLockError},
+    mirror::job::MirrorJob,
 };
+
+const MIRROR_SOURCE_FILES: &[&str] = &["README.md", "AGENTS.md", "CLAUDE.md"];
+const WATCHER_DEBOUNCE_MS: u64 = 500;
 
 /// State of the vault as known to the app.
 ///
@@ -45,6 +53,11 @@ pub enum VaultState {
 pub enum VaultManagerEvent {
     /// State changed — `new` is the post-transition state.
     StateChanged { new: VaultState },
+
+    /// A file in the vault root was created, modified, or removed.
+    /// Subscribers (e.g. VaultPanel) should refresh their tree view.
+    /// `path` is the absolute path of the changed file.
+    FileChanged { path: PathBuf },
 }
 
 /// Errors surfaced by manager operations. These are also folded into
@@ -67,6 +80,11 @@ pub struct VaultManager {
     config: Option<VaultConfig>,
     lock: Option<VaultLock>,
     state: VaultState,
+    /// Sub-model that owns the notify-based filesystem watcher.
+    /// Replaced (old watcher silently abandoned) whenever the vault is
+    /// re-initialized to a new path.
+    #[cfg(not(target_family = "wasm"))]
+    _fs_watcher: Option<ModelHandle<BulkFilesystemWatcher>>,
 }
 
 impl VaultManager {
@@ -78,6 +96,8 @@ impl VaultManager {
             config: None,
             lock: None,
             state: VaultState::Uninitialized,
+            #[cfg(not(target_family = "wasm"))]
+            _fs_watcher: None,
         }
     }
 
@@ -130,6 +150,8 @@ impl VaultManager {
         match VaultLock::acquire(&config.root) {
             Ok(lock) => {
                 self.lock = Some(lock);
+                #[cfg(not(target_family = "wasm"))]
+                self.start_watcher(&config, ctx);
                 self.config = Some(config);
                 self.set_state(VaultState::Ready, ctx);
                 Ok(())
@@ -143,6 +165,127 @@ impl VaultManager {
                 let msg = other.to_string();
                 self.set_state(VaultState::Error(msg), ctx);
                 Err(VaultManagerError::Lock(other))
+            }
+        }
+    }
+
+    /// Create a new `BulkFilesystemWatcher` sub-model and register:
+    /// - vault root (recursive, all files) → emits `FileChanged` on any event
+    /// - mirror source root (recursive, filtered to mirror filenames) →
+    ///   also runs `MirrorJob::copy_file` before emitting `FileChanged`
+    #[cfg(not(target_family = "wasm"))]
+    fn start_watcher(&mut self, config: &VaultConfig, ctx: &mut ModelContext<Self>) {
+        let watcher = ctx.add_model(|ctx| {
+            BulkFilesystemWatcher::new(Duration::from_millis(WATCHER_DEBOUNCE_MS), ctx)
+        });
+
+        let vault_root = config.root.clone();
+        let source_root = config.mirror_source_root.clone();
+
+        // Watch vault root — all events trigger a tree refresh.
+        let vault_root_clone = vault_root.clone();
+        let reg_vault = watcher.update(ctx, move |w, _| {
+            w.register_path(&vault_root_clone, WatchFilter::accept_all(), RecursiveMode::Recursive)
+        });
+        ctx.spawn(reg_vault, |_, result, _| {
+            if let Err(e) = result {
+                log::warn!("vault watcher: failed to watch vault root: {e}");
+            }
+        });
+
+        // Watch source root — filtered to mirror-relevant filenames only.
+        let mirror_names: Arc<[&'static str]> = Arc::from(MIRROR_SOURCE_FILES);
+        let reg_source = watcher.update(ctx, move |w, _| {
+            let names = mirror_names.clone();
+            w.register_path(
+                &source_root,
+                WatchFilter::with_filter(Arc::new(move |path: &Path| {
+                    path.file_name()
+                        .and_then(|n| n.to_str())
+                        .is_some_and(|n| names.contains(&n))
+                })),
+                RecursiveMode::Recursive,
+            )
+        });
+        ctx.spawn(reg_source, |_, result, _| {
+            if let Err(e) = result {
+                log::warn!("vault watcher: failed to watch mirror source root: {e}");
+            }
+        });
+
+        ctx.subscribe_to_model(&watcher, move |me, event: &BulkFilesystemWatcherEvent, ctx| {
+            me.handle_fs_event(event, &vault_root, ctx);
+        });
+
+        self._fs_watcher = Some(watcher);
+    }
+
+    /// Dispatch filesystem events from the sub-model watcher.
+    ///
+    /// - Events under `vault_root` → emit `FileChanged` so the explorer tree refreshes.
+    /// - Events for mirror source files (README/AGENTS/CLAUDE) → copy into vault
+    ///   via `MirrorJob`, then emit `FileChanged` for the updated vault path.
+    #[cfg(not(target_family = "wasm"))]
+    fn handle_fs_event(
+        &mut self,
+        event: &BulkFilesystemWatcherEvent,
+        vault_root: &Path,
+        ctx: &mut ModelContext<Self>,
+    ) {
+        let all_paths: Vec<PathBuf> = event
+            .added
+            .iter()
+            .chain(event.modified.iter())
+            .chain(event.deleted.iter())
+            .chain(event.moved.keys())
+            .chain(event.moved.values())
+            .cloned()
+            .collect();
+
+        let Some(config) = self.config.as_ref() else {
+            return;
+        };
+
+        for path in all_paths {
+            if path.starts_with(vault_root) {
+                ctx.emit(VaultManagerEvent::FileChanged { path });
+            } else {
+                // Source-root file — trigger a mirror copy if it's a mirror file.
+                let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if !MIRROR_SOURCE_FILES.contains(&file_name) {
+                    continue;
+                }
+                // Deleted source file → remove mirror.
+                let is_deleted = event.deleted.contains(&path);
+                let mirror_job = MirrorJob::new(
+                    config.root.clone(),
+                    config.mirror_source_root.clone(),
+                    config.mirror_max_depth,
+                );
+                let vault_root_owned = vault_root.to_path_buf();
+                let path_clone = path.clone();
+                ctx.spawn(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            if is_deleted {
+                                let _ = mirror_job.handle_remove(&path_clone);
+                            } else {
+                                let _ = mirror_job.copy_file(&path_clone);
+                            }
+                            vault_root_owned
+                        })
+                        .await
+                        .unwrap_or_else(|_| PathBuf::new())
+                    },
+                    |me, vault_root_owned, ctx| {
+                        if !vault_root_owned.as_os_str().is_empty() {
+                            ctx.emit(VaultManagerEvent::FileChanged {
+                                path: vault_root_owned,
+                            });
+                        }
+                        let _ = me; // suppress unused warning
+                    },
+                );
             }
         }
     }

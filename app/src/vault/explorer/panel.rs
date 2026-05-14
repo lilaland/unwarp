@@ -115,6 +115,18 @@ impl VaultPanel {
                 }
                 ctx.notify();
             }
+            VaultManagerEvent::FileChanged { .. } => {
+                // Filesystem watcher fired — rebuild the tree immediately.
+                // The 2s polling loop is kept as a fallback but this gives
+                // sub-second refresh on actual file changes.
+                if let Some(root) = me.vault.as_ref(ctx).vault_root() {
+                    let next = walk_vault(root);
+                    if next != me.entries {
+                        me.entries = next;
+                        ctx.notify();
+                    }
+                }
+            }
         });
 
         let panel = Self {

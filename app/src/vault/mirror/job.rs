@@ -84,6 +84,80 @@ impl MirrorJob {
         }
     }
 
+    /// Mirror a single changed source file (called from the filesystem watcher).
+    ///
+    /// `source_path` must be an absolute path to one of the mirror source files
+    /// (README.md, AGENTS.md, CLAUDE.md). The project name is inferred from its
+    /// parent directory relative to `source_root`.
+    pub fn copy_file(&self, source_path: &Path) -> Result<(), MirrorError> {
+        let project_dir = source_path
+            .parent()
+            .ok_or_else(|| MirrorError::Io {
+                path: source_path.display().to_string(),
+                source: io::Error::new(io::ErrorKind::InvalidInput, "source has no parent"),
+            })?;
+
+        let relative = project_dir.strip_prefix(&self.source_root).unwrap_or(project_dir);
+        let project_name = project_display_name(
+            project_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown"),
+            relative,
+        );
+
+        let file_name = source_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        let dest_dir = self.vault_root.join("projects").join(&project_name);
+        let dest = dest_dir.join(mirror_filename(file_name));
+
+        // If source has vanished between notify and read, treat as removal.
+        if !source_path.exists() {
+            return self.handle_remove(source_path);
+        }
+
+        mirror_one(source_path, &dest).map(|_| ())
+    }
+
+    /// Remove the vault mirror corresponding to a deleted source file.
+    pub fn handle_remove(&self, source_path: &Path) -> Result<(), MirrorError> {
+        let project_dir = source_path
+            .parent()
+            .ok_or_else(|| MirrorError::Io {
+                path: source_path.display().to_string(),
+                source: io::Error::new(io::ErrorKind::InvalidInput, "source has no parent"),
+            })?;
+
+        let relative = project_dir.strip_prefix(&self.source_root).unwrap_or(project_dir);
+        let project_name = project_display_name(
+            project_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown"),
+            relative,
+        );
+
+        let file_name = source_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        let dest = self
+            .vault_root
+            .join("projects")
+            .join(&project_name)
+            .join(mirror_filename(file_name));
+
+        if dest.exists() {
+            std::fs::remove_file(&dest).map_err(|e| MirrorError::Io {
+                path: dest.display().to_string(),
+                source: e,
+            })?;
+        }
+        Ok(())
+    }
+
     /// Run a single full scan of the source tree, mirroring all detected
     /// project files and sweeping stale `.mirror.md` entries.
     ///
@@ -543,5 +617,57 @@ mod tests {
         let job = MirrorJob::new(bare_vault, source, 2);
         let err = job.scan_once().unwrap_err();
         assert!(matches!(err, MirrorError::VaultProjectsMissing(_)));
+    }
+
+    #[test]
+    fn copy_file_mirrors_single_source_file() {
+        let (_g, vault, source) = make_dirs();
+        make_project(&source, "myproj", &[("README.md", "project content")]);
+        let source_file = source.join("myproj").join("README.md");
+        let job = MirrorJob::new(vault.clone(), source.clone(), 2);
+
+        job.copy_file(&source_file).unwrap();
+
+        let dest = vault.join("projects/myproj/README.mirror.md");
+        assert!(dest.is_file());
+        let content = std::fs::read_to_string(&dest).unwrap();
+        assert!(content.contains("project content"));
+    }
+
+    #[test]
+    fn copy_file_treats_vanished_source_as_remove() {
+        let (_g, vault, source) = make_dirs();
+        make_project(&source, "myproj", &[("README.md", "original")]);
+        let job = MirrorJob::new(vault.clone(), source.clone(), 2);
+        // First mirror via scan_once so the dest exists.
+        job.scan_once().unwrap();
+        let dest = vault.join("projects/myproj/README.mirror.md");
+        assert!(dest.is_file());
+
+        // Remove source; copy_file should delete the dest.
+        std::fs::remove_file(source.join("myproj/README.md")).unwrap();
+        job.copy_file(&source.join("myproj/README.md")).unwrap();
+        assert!(!dest.is_file());
+    }
+
+    #[test]
+    fn handle_remove_deletes_existing_mirror() {
+        let (_g, vault, source) = make_dirs();
+        make_project(&source, "myproj", &[("README.md", "x")]);
+        let job = MirrorJob::new(vault.clone(), source.clone(), 2);
+        job.scan_once().unwrap();
+        let dest = vault.join("projects/myproj/README.mirror.md");
+        assert!(dest.is_file());
+
+        job.handle_remove(&source.join("myproj/README.md")).unwrap();
+        assert!(!dest.is_file());
+    }
+
+    #[test]
+    fn handle_remove_is_noop_when_mirror_absent() {
+        let (_g, vault, source) = make_dirs();
+        let job = MirrorJob::new(vault.clone(), source.clone(), 2);
+        // No mirror exists — should not error.
+        job.handle_remove(&source.join("ghost/README.md")).unwrap();
     }
 }
