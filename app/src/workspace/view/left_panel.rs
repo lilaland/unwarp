@@ -290,16 +290,18 @@ impl LeftPanelView {
         ctx.subscribe_to_view(&vault_explorer_view, |_me, _, event, ctx| {
             use crate::vault::explorer::panel::VaultPanelEvent;
             match event {
-                VaultPanelEvent::OpenFile { path } => {
-                    // Resolve the file target via the same helper FileTreeView
-                    // uses — markdown files route to MarkdownViewer when the
-                    // user prefers that, others to the configured code editor.
+                VaultPanelEvent::OpenFile { path, is_read_only } => {
                     let settings = EditorSettings::as_ref(ctx);
-                    let target = crate::util::openable_file_type::resolve_file_target_to_open_in_warp(
-                        path,
-                        settings,
-                        None,
-                    );
+                    let layout = *settings.open_file_layout;
+                    // Read-only vault files (brew docs, *.mirror.md) open in the
+                    // markdown viewer. Editable files open in the code editor so
+                    // the user can type and Cmd+S to save — we bypass the normal
+                    // resolve helper because it would route .md to MarkdownViewer.
+                    let target = if *is_read_only {
+                        FileTarget::MarkdownViewer(layout)
+                    } else {
+                        FileTarget::CodeEditor(layout)
+                    };
                     ctx.emit(LeftPanelEvent::OpenFileWithTarget {
                         path: path.clone(),
                         target,
