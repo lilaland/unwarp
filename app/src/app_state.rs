@@ -315,6 +315,7 @@ pub enum LeftPanelDisplayedTab {
     ServerFileBrowser,
     SkillManager,
     OllamaMonitor,
+    VaultExplorer,
 }
 
 impl From<ToolPanelView> for LeftPanelDisplayedTab {
@@ -328,6 +329,7 @@ impl From<ToolPanelView> for LeftPanelDisplayedTab {
             ToolPanelView::ServerFileBrowser => LeftPanelDisplayedTab::ServerFileBrowser,
             ToolPanelView::SkillManager => LeftPanelDisplayedTab::SkillManager,
             ToolPanelView::OllamaMonitor => LeftPanelDisplayedTab::OllamaMonitor,
+            ToolPanelView::VaultExplorer => LeftPanelDisplayedTab::VaultExplorer,
         }
     }
 }
