@@ -1,55 +1,111 @@
-//! Vault explorer panel — B-1 stub.
+//! Vault explorer panel.
 //!
-//! Owns no state in this commit beyond a handle to the [`VaultManager`]
-//! singleton. Renders the appropriate empty state based on
-//! [`VaultState`]:
-//! - `Uninitialized` → "Set up your knowledge vault" CTA (handled by
-//!   the workspace banner today; we render a hint here)
-//! - `Ready` → "Vault tree loading…" placeholder (real tree lands B-2)
-//! - `Locked { by_pid }` → "Owned by another instance" message
-//! - `Error(msg)` → the message
+//! Subscribes to [`VaultManager`] and rebuilds an in-memory tree on each
+//! `StateChanged` event. v1 renders the full vault flat (no collapse /
+//! expand); B-3 will hook a filesystem watcher and add click-to-open.
 //!
-//! Subscribes to `VaultManager` so empty states track state changes.
+//! When the manager is `Uninitialized`, the panel offers a "Create new
+//! vault" affordance — clicking it dispatches `VaultPanelAction::CreateNew`
+//! which builds a `VaultConfig` from `[unwarp.vault]` settings and calls
+//! `VaultManager::create_new`. This is a stop-gap until the proper
+//! workspace first-run banner lands.
 
 use warpui::{
     elements::{
-        Container, CrossAxisAlignment, Element, Flex, MainAxisSize, ParentElement, Text,
+        Container, CrossAxisAlignment, Element, Flex, Hoverable, MainAxisSize, MouseStateHandle,
+        ParentElement, Text,
     },
+    platform::Cursor,
     AppContext, Entity, FocusContext, ModelHandle, SingletonEntity, TypedActionView, View,
     ViewContext,
 };
 
 use crate::appearance::Appearance;
+use crate::settings::UnwarpSettings;
 use crate::vault::manager::{VaultManager, VaultManagerEvent, VaultState};
 
-const PANEL_HORIZONTAL_PADDING: f32 = 16.0;
-const PANEL_VERTICAL_PADDING: f32 = 16.0;
+use super::tree::{walk_vault, VaultEntry, VaultEntryKind};
+
+const PANEL_HORIZONTAL_PADDING: f32 = 12.0;
+const PANEL_VERTICAL_PADDING: f32 = 12.0;
 const HEADING_FONT_SIZE: f32 = 13.0;
 const BODY_FONT_SIZE: f32 = 12.0;
+const ROW_FONT_SIZE: f32 = 13.0;
+const ROW_VERTICAL_SPACING: f32 = 3.0;
+const ROW_HORIZONTAL_PADDING: f32 = 6.0;
+const INDENT_PER_DEPTH: f32 = 14.0;
 const SECTION_SPACING: f32 = 8.0;
+const CTA_VERTICAL_PADDING: f32 = 6.0;
 
 #[derive(Clone, Debug)]
 pub enum VaultPanelAction {
-    /// User clicked the "Set up vault" CTA in the empty state.
-    /// The workspace handles the actual setup flow (file picker etc.).
-    RequestSetup,
+    /// Initialize a fresh vault at the path stored in settings (default:
+    /// `~/Documents/unwarp-vault/`). Stop-gap until the proper first-run
+    /// banner lands.
+    CreateNew,
 }
 
-/// Vault explorer panel view.
 pub struct VaultPanel {
     vault: ModelHandle<VaultManager>,
+    /// Cached tree contents. Rebuilt on every `StateChanged` to `Ready`.
+    /// Empty when state != Ready.
+    entries: Vec<VaultEntry>,
+    cta_mouse_state: MouseStateHandle,
 }
 
 impl VaultPanel {
     pub fn new(ctx: &mut ViewContext<Self>) -> Self {
         let vault = VaultManager::handle(ctx);
-        // Re-render whenever the vault state changes.
-        ctx.subscribe_to_model(&vault, |_me, _, event, ctx| match event {
-            VaultManagerEvent::StateChanged { .. } => {
+        // Populate the tree if the manager is already Ready by the time the
+        // panel is constructed (e.g., workspace pre-initialized it).
+        let entries = if vault.as_ref(ctx).is_ready() {
+            if let Some(root) = vault.as_ref(ctx).vault_root() {
+                walk_vault(root)
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+        ctx.subscribe_to_model(&vault, |me, _, event, ctx| match event {
+            VaultManagerEvent::StateChanged { new } => {
+                if matches!(new, VaultState::Ready) {
+                    if let Some(root) = me.vault.as_ref(ctx).vault_root() {
+                        me.entries = walk_vault(root);
+                    }
+                } else {
+                    me.entries.clear();
+                }
                 ctx.notify();
             }
         });
-        Self { vault }
+        Self {
+            vault,
+            entries,
+            cta_mouse_state: MouseStateHandle::default(),
+        }
+    }
+
+    fn try_create_new(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(home_dir) = dirs::home_dir() else {
+            log::warn!("vault explorer: home directory not available; cannot create vault");
+            return;
+        };
+        let config = match UnwarpSettings::vault_config(ctx, &home_dir) {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("vault explorer: invalid vault config in settings: {e}");
+                return;
+            }
+        };
+        // `initialize` routes to create_new for unrecognized paths and
+        // adopt_existing for recognized ones, so this affordance works
+        // whether the path is fresh or already a vault.
+        self.vault.update(ctx, |m, ctx| {
+            if let Err(e) = m.initialize(config, ctx) {
+                log::warn!("vault explorer: initialization failed: {e}");
+            }
+        });
     }
 }
 
@@ -60,11 +116,9 @@ impl Entity for VaultPanel {
 impl TypedActionView for VaultPanel {
     type Action = VaultPanelAction;
 
-    fn handle_action(&mut self, action: &VaultPanelAction, _ctx: &mut ViewContext<Self>) {
+    fn handle_action(&mut self, action: &VaultPanelAction, ctx: &mut ViewContext<Self>) {
         match action {
-            // Workspace will surface the actual setup affordance once the
-            // first-run flow lands. For now this is a no-op placeholder.
-            VaultPanelAction::RequestSetup => {}
+            VaultPanelAction::CreateNew => self.try_create_new(ctx),
         }
     }
 }
@@ -80,36 +134,80 @@ impl View for VaultPanel {
         let appearance = Appearance::as_ref(app);
         let manager = self.vault.as_ref(app);
 
-        let (heading, body) = match manager.state() {
-            VaultState::Uninitialized => (
-                "Vault not set up",
-                "Open Settings → Vault to point unwarp at an Obsidian vault, or create a new one at ~/Documents/unwarp-vault.",
+        let body = match manager.state() {
+            VaultState::Uninitialized => self.render_uninitialized(appearance),
+            VaultState::Ready => self.render_tree(appearance, app),
+            VaultState::Locked { by_pid } => self.render_message(
+                "Vault locked",
+                &format!(
+                    "Another unwarp instance (pid {by_pid}) owns this vault. Quit it to take over."
+                ),
+                appearance,
             ),
-            VaultState::Ready => (
-                "Vault",
-                "Tree view coming soon. (B-2 lands the file walker.)",
-            ),
-            VaultState::Locked { by_pid } => {
-                // Need an owned String for the body; we lose the static-str
-                // optimization for this branch.
-                return self.render_message(
-                    "Vault locked",
-                    &format!(
-                        "Another unwarp instance (pid {by_pid}) owns this vault. Quit it to take over."
-                    ),
-                    appearance,
-                );
-            }
-            VaultState::Error(msg) => {
-                return self.render_message("Vault error", msg, appearance);
-            }
+            VaultState::Error(msg) => self.render_message("Vault error", msg, appearance),
         };
 
-        self.render_message(heading, body, appearance)
+        Container::new(body)
+            .with_padding_left(PANEL_HORIZONTAL_PADDING)
+            .with_padding_right(PANEL_HORIZONTAL_PADDING)
+            .with_padding_top(PANEL_VERTICAL_PADDING)
+            .with_padding_bottom(PANEL_VERTICAL_PADDING)
+            .finish()
     }
 }
 
 impl VaultPanel {
+    fn render_uninitialized(&self, appearance: &Appearance) -> Box<dyn Element> {
+        let theme = appearance.theme();
+
+        let heading = Text::new_inline(
+            "Vault not set up".to_owned(),
+            appearance.ui_font_family(),
+            HEADING_FONT_SIZE,
+        )
+        .with_color(theme.main_text_color(theme.background()).into())
+        .finish();
+
+        let body = Text::new_inline(
+            "Create a vault at the path in [unwarp.vault.path] (default ~/Documents/unwarp-vault/).".to_owned(),
+            appearance.ui_font_family(),
+            BODY_FONT_SIZE,
+        )
+        .with_color(theme.sub_text_color(theme.background()).into())
+        .finish();
+
+        let cta_label = Text::new_inline(
+            "Create new vault".to_owned(),
+            appearance.ui_font_family(),
+            BODY_FONT_SIZE,
+        )
+        .with_color(theme.accent().into())
+        .finish();
+        let cta = Hoverable::new(self.cta_mouse_state.clone(), |_| {
+            Container::new(cta_label)
+                .with_padding_top(CTA_VERTICAL_PADDING)
+                .with_padding_bottom(CTA_VERTICAL_PADDING)
+                .finish()
+        })
+        .on_click(move |ctx, _, _| {
+            ctx.dispatch_typed_action(VaultPanelAction::CreateNew);
+        })
+        .with_cursor(Cursor::PointingHand)
+        .finish();
+
+        Flex::column()
+            .with_cross_axis_alignment(CrossAxisAlignment::Start)
+            .with_main_axis_size(MainAxisSize::Min)
+            .with_child(heading)
+            .with_child(
+                Container::new(body)
+                    .with_padding_top(SECTION_SPACING)
+                    .finish(),
+            )
+            .with_child(cta)
+            .finish()
+    }
+
     fn render_message(
         &self,
         heading: &str,
@@ -133,7 +231,7 @@ impl VaultPanel {
         .with_color(theme.sub_text_color(theme.background()).into())
         .finish();
 
-        let column = Flex::column()
+        Flex::column()
             .with_cross_axis_alignment(CrossAxisAlignment::Start)
             .with_main_axis_size(MainAxisSize::Min)
             .with_child(heading_text)
@@ -142,13 +240,78 @@ impl VaultPanel {
                     .with_padding_top(SECTION_SPACING)
                     .finish(),
             )
-            .finish();
-
-        Container::new(column)
-            .with_padding_left(PANEL_HORIZONTAL_PADDING)
-            .with_padding_right(PANEL_HORIZONTAL_PADDING)
-            .with_padding_top(PANEL_VERTICAL_PADDING)
-            .with_padding_bottom(PANEL_VERTICAL_PADDING)
             .finish()
     }
+
+    fn render_tree(&self, appearance: &Appearance, app: &AppContext) -> Box<dyn Element> {
+        if self.entries.is_empty() {
+            return self.render_message(
+                "Vault is empty",
+                "No files in the vault yet. Run the brew docs job or drop a markdown file in ~/Documents/unwarp-vault/notes/.",
+                appearance,
+            );
+        }
+
+        let mut col = Flex::column()
+            .with_cross_axis_alignment(CrossAxisAlignment::Start)
+            .with_main_axis_size(MainAxisSize::Min);
+
+        let vault_root_label = self
+            .vault
+            .as_ref(app)
+            .vault_root()
+            .and_then(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_owned))
+            .unwrap_or_else(|| "Vault".to_owned());
+        let heading = Text::new_inline(
+            vault_root_label,
+            appearance.ui_font_family(),
+            HEADING_FONT_SIZE,
+        )
+        .with_color(
+            appearance
+                .theme()
+                .sub_text_color(appearance.theme().background())
+                .into(),
+        )
+        .finish();
+        col = col.with_child(
+            Container::new(heading)
+                .with_padding_bottom(SECTION_SPACING)
+                .finish(),
+        );
+
+        for entry in &self.entries {
+            col = col.with_child(self.render_row(entry, appearance));
+        }
+        col.finish()
+    }
+
+    fn render_row(&self, entry: &VaultEntry, appearance: &Appearance) -> Box<dyn Element> {
+        let theme = appearance.theme();
+        let indent = entry.depth as f32 * INDENT_PER_DEPTH;
+        let prefix = match entry.kind {
+            VaultEntryKind::Directory => "▸ ",
+            VaultEntryKind::File => "  ",
+        };
+        let suffix = if entry.is_read_only { " 🔒" } else { "" };
+
+        let label = format!("{prefix}{}{suffix}", entry.name);
+        let label_color = if entry.is_read_only {
+            theme.sub_text_color(theme.background())
+        } else {
+            theme.main_text_color(theme.background())
+        };
+
+        let text = Text::new_inline(label, appearance.ui_font_family(), ROW_FONT_SIZE)
+            .with_color(label_color.into())
+            .finish();
+
+        Container::new(text)
+            .with_padding_left(ROW_HORIZONTAL_PADDING + indent)
+            .with_padding_right(ROW_HORIZONTAL_PADDING)
+            .with_padding_top(ROW_VERTICAL_SPACING)
+            .with_padding_bottom(ROW_VERTICAL_SPACING)
+            .finish()
+    }
+
 }
