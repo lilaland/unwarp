@@ -78,6 +78,11 @@ pub struct VaultNoteIndexer {
     pub embed_config: EmbedClientConfig,
     pub db_path: PathBuf,
     pub chunk_config: ChunkConfig,
+    /// If set, embed calls validate that returned vectors match this dimension.
+    /// A mismatch surfaces as `IndexError::Embed(EmbedError::DimensionMismatch)`
+    /// and is pushed to `IndexReport::errors`. Users should update
+    /// `unwarp.rag.vector_dimensions` and run "Re-index all" to recover.
+    pub expected_dimensions: Option<usize>,
 }
 
 impl VaultNoteIndexer {
@@ -87,7 +92,14 @@ impl VaultNoteIndexer {
             embed_config,
             db_path,
             chunk_config: ChunkConfig::default(),
+            expected_dimensions: None,
         }
+    }
+
+    /// Set the expected embedding dimension for validation (§10.2).
+    pub fn with_expected_dimensions(mut self, dim: usize) -> Self {
+        self.expected_dimensions = Some(dim);
+        self
     }
 
     /// Walk the vault root and index any file whose content hash has changed.
@@ -164,7 +176,7 @@ impl VaultNoteIndexer {
         // Embed all chunks (respects the semaphore in embed.rs).
         let client = embed::build_embed_client(&self.embed_config);
         let embeddings =
-            embed::embed_batch(&client, &self.embed_config.model, texts, None).await?;
+            embed::embed_batch(&client, &self.embed_config.model, texts, self.expected_dimensions).await?;
 
         let chunk_count = embeddings.len();
         let store = VectorStore::new(&self.db_path)?;

@@ -23,6 +23,11 @@ use crate::vault::config::{
 /// Users override via the model picker or by editing `settings.toml`.
 pub const DEFAULT_CHAT_MODEL: &str = "gemma3";
 
+/// Default embedding vector dimension. Matches `nomic-embed-text` (768-dim).
+/// Update `unwarp.rag.vector_dimensions` in settings.toml when changing models
+/// (e.g., `mxbai-embed-large` is 1024-dim), then run "Re-index all".
+pub const DEFAULT_EMBEDDING_DIMENSIONS: usize = 768;
+
 /// Default vault path setting value. We store it as `~/...` so the user
 /// editing `settings.toml` sees a portable string, then expand at load time.
 fn default_vault_path() -> String {
@@ -88,6 +93,15 @@ define_settings_group!(UnwarpSettings,
             private: false,
             toml_path: "unwarp.vault.mirror_max_depth",
             description: "Maximum directory depth (from mirror_source_root) the mirror job recurses to.",
+        },
+        rag_vector_dimensions: RagVectorDimensions {
+            type: i64,
+            default: DEFAULT_EMBEDDING_DIMENSIONS as i64,
+            supported_platforms: SupportedPlatforms::ALL,
+            sync_to_cloud: SyncToCloud::Never,
+            private: false,
+            toml_path: "unwarp.rag.vector_dimensions",
+            description: "Expected embedding vector dimension. Must match your embed model (768 for nomic-embed-text, 1024 for mxbai-embed-large). Change this and run 'Re-index all' when switching embed models.",
         },
     ]
 );

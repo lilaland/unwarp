@@ -7,8 +7,17 @@
 //!   - All other paths → ignored (tree-refresh is handled by VaultPanel directly)
 //!
 //! TDD §7.4: "Trigger: VaultManager::FileChanged event. Re-index only changed files."
+//!
+//! §10.2: Embedding dimension validation — the indexer is constructed with the
+//! dimension configured in `unwarp.rag.vector_dimensions` (default 768). If the
+//! embed model changes to one with a different dimension, `DimensionMismatch`
+//! errors surface in `IndexReport::errors` with a clear log message telling the
+//! user to update the setting and click "Re-index all".
 
 use warpui::{Entity, ModelContext, SingletonEntity};
+
+use settings::Setting;
+use warpui::AppContext;
 
 use crate::{
     persistence::database_file_path,
@@ -16,6 +25,7 @@ use crate::{
         embed::EmbedClientConfig,
         index::vault_notes::VaultNoteIndexer,
     },
+    settings::{UnwarpSettings, DEFAULT_EMBEDDING_DIMENSIONS},
     vault::{
         manager::{VaultManager, VaultManagerEvent, VaultState},
     },
@@ -45,11 +55,13 @@ impl RagIndexManager {
                     let path = path.clone();
                     let db_path = database_file_path();
                     let embed_config = EmbedClientConfig::default();
+                    let expected_dim = embed_dim_from_settings(ctx);
 
                     ctx.spawn(
                         async move {
                             let indexer =
-                                VaultNoteIndexer::new(vault_root, db_path, embed_config);
+                                VaultNoteIndexer::new(vault_root, db_path, embed_config)
+                                    .with_expected_dimensions(expected_dim);
                             match indexer.index_file(&path).await {
                                 Ok(0) => {} // unchanged / up-to-date
                                 Ok(n) => {
@@ -76,15 +88,31 @@ impl RagIndexManager {
 
                     let db_path = database_file_path();
                     let embed_config = EmbedClientConfig::default();
+                    let expected_dim = embed_dim_from_settings(ctx);
 
                     ctx.spawn(
                         async move {
                             let indexer =
-                                VaultNoteIndexer::new(vault_root, db_path, embed_config);
+                                VaultNoteIndexer::new(vault_root, db_path, embed_config)
+                                    .with_expected_dimensions(expected_dim);
                             match indexer.run_full_index().await {
                                 Ok(report) => {
                                     if report.files_indexed > 0 || !report.errors.is_empty() {
                                         log::info!("rag: vault startup index: {report}");
+                                    }
+                                    // §10.2: surface dimension mismatch with actionable guidance.
+                                    let has_mismatch = report
+                                        .errors
+                                        .iter()
+                                        .any(|e| e.contains("dimension mismatch"));
+                                    if has_mismatch {
+                                        log::error!(
+                                            "rag: embedding dimension mismatch detected. \
+                                             Your embed model returns a different vector size \
+                                             than `unwarp.rag.vector_dimensions` (currently {expected_dim}). \
+                                             Update that setting to match your model's dimension, \
+                                             then click 'Re-index all' in the vault panel."
+                                        );
                                     }
                                 }
                                 Err(e) => {
@@ -99,6 +127,16 @@ impl RagIndexManager {
             }
         });
         Self
+    }
+}
+
+/// Read `unwarp.rag.vector_dimensions` from settings, clamped to a valid `usize`.
+fn embed_dim_from_settings(ctx: &AppContext) -> usize {
+    let raw = *UnwarpSettings::as_ref(ctx).rag_vector_dimensions.value();
+    if raw > 0 {
+        raw as usize
+    } else {
+        DEFAULT_EMBEDDING_DIMENSIONS
     }
 }
 
