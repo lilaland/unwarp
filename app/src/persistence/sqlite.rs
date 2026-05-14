@@ -638,6 +638,8 @@ fn write_zap_app_group_sqlite_migration_marker(marker: &Path) -> Result<()> {
 }
 
 /// Creates or connects to the database at `database_path` and runs any migrations.
+/// On startup, runs `PRAGMA integrity_check`; if the database is corrupt it is
+/// backed up to `<name>.db.bak` and rebuilt from scratch (§10.4).
 fn setup_database(database_path: &Path) -> Result<SqliteConnection> {
     let db_url = database_path
         .to_str()
@@ -651,7 +653,71 @@ fn setup_database(database_path: &Path) -> Result<SqliteConnection> {
     conn.run_pending_migrations(persistence::MIGRATIONS)
         .map_err(|e| anyhow!(e))
         .context("Failed to perform migrations")?;
+
+    // §10.4: run integrity check after migrations; recover automatically on corruption.
+    let errors = db_integrity_errors(&mut conn);
+    if !errors.is_empty() {
+        log::error!(
+            "SQLite integrity_check failed ({} issue(s)) — backing up and rebuilding. \
+             Errors: {}",
+            errors.len(),
+            errors.join("; ")
+        );
+        drop(conn);
+        backup_corrupt_db(database_path);
+        // Reopen and re-migrate on the fresh file.
+        let mut fresh = establish_connection(db_url, false)?;
+        fresh
+            .run_pending_migrations(persistence::MIGRATIONS)
+            .map_err(|e| anyhow!(e))
+            .context("Failed to run migrations on rebuilt database")?;
+        return Ok(fresh);
+    }
+
     Ok(conn)
+}
+
+/// Runs `PRAGMA integrity_check(100)` and returns the error strings.
+/// An empty `Vec` means the database is healthy.
+fn db_integrity_errors(conn: &mut SqliteConnection) -> Vec<String> {
+    use diesel::{sql_query, sql_types::Text, QueryableByName, RunQueryDsl};
+
+    #[derive(QueryableByName)]
+    struct Row {
+        #[diesel(sql_type = Text)]
+        integrity_check: String,
+    }
+
+    match sql_query("PRAGMA integrity_check(100)").load::<Row>(conn) {
+        Ok(rows) => {
+            if rows.len() == 1 && rows[0].integrity_check == "ok" {
+                Vec::new()
+            } else {
+                rows.into_iter().map(|r| r.integrity_check).collect()
+            }
+        }
+        Err(e) => vec![format!("query error: {e}")],
+    }
+}
+
+/// Rename the corrupt database (and its WAL/SHM sidecars) to `*.bak` so the
+/// next `establish_connection` starts with a fresh file.
+fn backup_corrupt_db(database_path: &Path) {
+    let bak = database_path.with_extension("db.bak");
+    if let Err(e) = std::fs::rename(database_path, &bak) {
+        log::warn!("Could not back up corrupt database: {e}");
+    } else {
+        log::warn!(
+            "Corrupt database backed up to `{}`",
+            bak.display()
+        );
+    }
+    for ext in ["sqlite-wal", "sqlite-shm"] {
+        let sidecar = database_path.with_extension(ext);
+        if sidecar.exists() {
+            let _ = std::fs::remove_file(sidecar);
+        }
+    }
 }
 
 /// The path at which the sqlite database is located.
