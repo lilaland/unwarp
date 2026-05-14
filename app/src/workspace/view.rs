@@ -591,6 +591,8 @@ pub(crate) const LEFT_PANEL_SSH_MANAGER_BINDING_NAME: &str = "workspace:left_pan
 pub(crate) const LEFT_PANEL_SKILL_MANAGER_BINDING_NAME: &str = "workspace:left_panel_skill_manager";
 pub(crate) const LEFT_PANEL_OLLAMA_MONITOR_BINDING_NAME: &str =
     "workspace:left_panel_ollama_monitor";
+pub(crate) const LEFT_PANEL_VAULT_EXPLORER_BINDING_NAME: &str =
+    "workspace:left_panel_vault_explorer";
 
 const KEYBINDINGS_TO_CACHE: [&str; 4] = [
     ASK_AI_ASSISTANT_KEYBINDING_NAME,
@@ -3555,6 +3557,7 @@ impl Workspace {
                 LeftPanelDisplayedTab::SshManager => ToolPanelView::SshManager,
                 LeftPanelDisplayedTab::SkillManager => ToolPanelView::SkillManager,
                 LeftPanelDisplayedTab::OllamaMonitor => ToolPanelView::OllamaMonitor,
+                LeftPanelDisplayedTab::VaultExplorer => ToolPanelView::VaultExplorer,
             };
             lp.restore_active_view_from_snapshot(active_view, ctx);
             lp.set_active_pane_group(pane_group.clone(), &self.working_directories_model, ctx);
@@ -15464,6 +15467,9 @@ impl Workspace {
                         ToolPanelView::OllamaMonitor => {
                             crate::t!("workspace-left-panel-ollama-monitor")
                         }
+                        ToolPanelView::VaultExplorer => {
+                            crate::t!("workspace-left-panel-vault-explorer")
+                        }
                     }
                 } else {
                     crate::t!("workspace-tools-panel-tooltip")
@@ -15532,6 +15538,9 @@ impl Workspace {
                 }
                 ToolPanelView::OllamaMonitor => {
                     crate::t!("workspace-left-panel-ollama-monitor")
+                }
+                ToolPanelView::VaultExplorer => {
+                    crate::t!("workspace-left-panel-vault-explorer")
                 }
             }
         } else {
@@ -18374,6 +18383,8 @@ impl Workspace {
         }
         // unwarp Phase 1: Ollama monitoring panel, no feature flag, always visible.
         views.push(ToolPanelView::OllamaMonitor);
+        // unwarp Phase 2: Vault explorer (replaces hidden Drive panel slot).
+        views.push(ToolPanelView::VaultExplorer);
         views
     }
 

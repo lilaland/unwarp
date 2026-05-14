@@ -17,6 +17,7 @@
 
 pub mod brew;
 pub mod config;
+pub mod explorer;
 pub mod layout;
 pub mod lock;
 pub mod manager;

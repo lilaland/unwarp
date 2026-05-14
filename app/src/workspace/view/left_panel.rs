@@ -33,6 +33,7 @@ use crate::settings_view::keybindings::{KeybindingChangedEvent, KeybindingChange
 use crate::ollama_panel::OllamaPanel;
 use crate::skill_manager::{SkillManagerPanel, SkillManagerPanelEvent};
 use crate::ssh_manager::SshManagerPanel;
+use crate::vault::explorer::VaultPanel;
 #[cfg(feature = "local_fs")]
 use crate::util::file::external_editor::EditorSettings;
 #[cfg(feature = "local_fs")]
@@ -48,9 +49,9 @@ use crate::workspace::view::{
     LEFT_PANEL_AGENT_CONVERSATIONS_BINDING_NAME, LEFT_PANEL_GLOBAL_SEARCH_BINDING_NAME,
     LEFT_PANEL_OLLAMA_MONITOR_BINDING_NAME, LEFT_PANEL_PROJECT_EXPLORER_BINDING_NAME,
     LEFT_PANEL_SKILL_MANAGER_BINDING_NAME, LEFT_PANEL_SSH_MANAGER_BINDING_NAME,
-    LEFT_PANEL_WARP_DRIVE_BINDING_NAME, OPEN_GLOBAL_SEARCH_BINDING_NAME,
-    TOGGLE_CONVERSATION_LIST_VIEW_BINDING_NAME, TOGGLE_PROJECT_EXPLORER_BINDING_NAME,
-    TOGGLE_WARP_DRIVE_BINDING_NAME,
+    LEFT_PANEL_VAULT_EXPLORER_BINDING_NAME, LEFT_PANEL_WARP_DRIVE_BINDING_NAME,
+    OPEN_GLOBAL_SEARCH_BINDING_NAME, TOGGLE_CONVERSATION_LIST_VIEW_BINDING_NAME,
+    TOGGLE_PROJECT_EXPLORER_BINDING_NAME, TOGGLE_WARP_DRIVE_BINDING_NAME,
 };
 use crate::{
     appearance::Appearance,
@@ -79,6 +80,7 @@ struct MouseStateHandles {
     ssh_manager_button: MouseStateHandle,
     skill_manager_button: MouseStateHandle,
     ollama_monitor_button: MouseStateHandle,
+    vault_explorer_button: MouseStateHandle,
 }
 
 #[derive(Clone, Debug)]
@@ -90,6 +92,7 @@ pub enum LeftPanelAction {
     SshManager,
     SkillManager,
     OllamaMonitor,
+    VaultExplorer,
 }
 
 pub enum LeftPanelEvent {
@@ -133,6 +136,7 @@ pub enum ToolPanelView {
     SshManager,
     SkillManager,
     OllamaMonitor,
+    VaultExplorer,
 }
 
 /// Encapsulates the active view state to enforce that all mutations go through
@@ -202,6 +206,7 @@ pub struct LeftPanelView {
     ssh_manager_view: ViewHandle<SshManagerPanel>,
     skill_manager_view: ViewHandle<SkillManagerPanel>,
     ollama_monitor_view: ViewHandle<OllamaPanel>,
+    vault_explorer_view: ViewHandle<VaultPanel>,
     active_view: active_view_state::ActiveViewState,
     toolbelt_buttons: Vec<ToolbeltButtonConfig>,
     active_pane_group: Option<WeakViewHandle<PaneGroup>>,
@@ -249,6 +254,7 @@ impl LeftPanelView {
         let ssh_manager_view = ctx.add_typed_action_view(SshManagerPanel::new);
         let skill_manager_view = ctx.add_typed_action_view(SkillManagerPanel::new);
         let ollama_monitor_view = ctx.add_typed_action_view(OllamaPanel::new);
+        let vault_explorer_view = ctx.add_typed_action_view(VaultPanel::new);
         ctx.subscribe_to_view(&ssh_manager_view, |_me, _, event, ctx| {
             use crate::ssh_manager::SshManagerPanelEvent;
             match event {
@@ -380,6 +386,7 @@ impl LeftPanelView {
             ssh_manager_view,
             skill_manager_view,
             ollama_monitor_view,
+            vault_explorer_view,
             active_view: active_view_state::new(active_view),
             toolbelt_buttons,
             active_pane_group: None,
@@ -545,6 +552,18 @@ impl LeftPanelView {
                     active_icon: None,
                     tooltip_text: crate::t!("workspace-left-panel-ollama-monitor"),
                     action: LeftPanelAction::OllamaMonitor,
+                    render_with_active_state: false,
+                    tooltip_keybinding: toolbelt_tooltip_keybinding(&tooltip_keybinding_names, ctx),
+                    tooltip_keybinding_names,
+                }
+            }
+            ToolPanelView::VaultExplorer => {
+                let tooltip_keybinding_names = vec![LEFT_PANEL_VAULT_EXPLORER_BINDING_NAME];
+                ToolbeltButtonConfig {
+                    icon: Icon::Notebook,
+                    active_icon: None,
+                    tooltip_text: crate::t!("workspace-left-panel-vault-explorer"),
+                    action: LeftPanelAction::VaultExplorer,
                     render_with_active_state: false,
                     tooltip_keybinding: toolbelt_tooltip_keybinding(&tooltip_keybinding_names, ctx),
                     tooltip_keybinding_names,
@@ -801,6 +820,9 @@ impl LeftPanelView {
             ToolPanelView::OllamaMonitor => {
                 ctx.focus(&self.ollama_monitor_view);
             }
+            ToolPanelView::VaultExplorer => {
+                ctx.focus(&self.vault_explorer_view);
+            }
         }
     }
 
@@ -960,6 +982,9 @@ impl LeftPanelView {
                 LeftPanelAction::OllamaMonitor => {
                     self.active_view.get() == ToolPanelView::OllamaMonitor
                 }
+                LeftPanelAction::VaultExplorer => {
+                    self.active_view.get() == ToolPanelView::VaultExplorer
+                }
             };
         }
     }
@@ -1110,6 +1135,9 @@ impl LeftPanelView {
             LeftPanelAction::OllamaMonitor => {
                 active_view_state::set(self, ToolPanelView::OllamaMonitor, ctx);
             }
+            LeftPanelAction::VaultExplorer => {
+                active_view_state::set(self, ToolPanelView::VaultExplorer, ctx);
+            }
         }
     }
 
@@ -1212,6 +1240,7 @@ impl View for LeftPanelView {
                 ToolPanelView::SshManager => ctx.focus(&self.ssh_manager_view),
                 ToolPanelView::SkillManager => ctx.focus(&self.skill_manager_view),
                 ToolPanelView::OllamaMonitor => ctx.focus(&self.ollama_monitor_view),
+                ToolPanelView::VaultExplorer => ctx.focus(&self.vault_explorer_view),
             }
         }
     }
@@ -1229,6 +1258,7 @@ impl View for LeftPanelView {
             self.mouse_state_handles.ssh_manager_button.clone(),
             self.mouse_state_handles.skill_manager_button.clone(),
             self.mouse_state_handles.ollama_monitor_button.clone(),
+            self.mouse_state_handles.vault_explorer_button.clone(),
         ];
 
         // If there is only one button in the toolbelt row,
@@ -1306,6 +1336,14 @@ impl View for LeftPanelView {
             ToolPanelView::OllamaMonitor => Shrinkable::new(
                 1.0,
                 Container::new(ChildView::new(&self.ollama_monitor_view).finish())
+                    .with_padding_left(2.)
+                    .with_padding_right(2.)
+                    .finish(),
+            )
+            .finish(),
+            ToolPanelView::VaultExplorer => Shrinkable::new(
+                1.0,
+                Container::new(ChildView::new(&self.vault_explorer_view).finish())
                     .with_padding_left(2.)
                     .with_padding_right(2.)
                     .finish(),
