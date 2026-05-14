@@ -26,6 +26,13 @@ use warpui::{
 };
 
 use crate::appearance::Appearance;
+use crate::persistence::database_file_path;
+use crate::rag::{
+    embed::EmbedClientConfig,
+    index::{
+        command_blocks::CommandBlockIndexer, vault_notes::VaultNoteIndexer, IndexReport,
+    },
+};
 use crate::settings::UnwarpSettings;
 use crate::vault::brew::job::{BrewError, BrewJob, BrewJobReport};
 use crate::vault::manager::{VaultManager, VaultManagerEvent, VaultState};
@@ -61,6 +68,9 @@ pub enum VaultPanelAction {
     /// User clicked "Run jobs" — triggers MirrorJob + BrewJob in the
     /// background. Disabled while already running.
     RunJobs,
+    /// User clicked "Re-index all" — drops all vectors and re-embeds every
+    /// vault note + recent command blocks from scratch.
+    ReIndexAll,
 }
 
 /// Events VaultPanel emits to its parent (the LeftPanelView).
@@ -79,8 +89,11 @@ pub struct VaultPanel {
     entries: Vec<VaultEntry>,
     cta_mouse_state: MouseStateHandle,
     run_jobs_button_state: MouseStateHandle,
+    reindex_button_state: MouseStateHandle,
     /// True while the manual "Run jobs" pair is in flight.
     jobs_running: bool,
+    /// True while "Re-index all" is running.
+    indexing: bool,
     /// Short summary shown beneath the button after a manual run completes.
     last_run_summary: Option<String>,
 }
@@ -134,7 +147,9 @@ impl VaultPanel {
             entries,
             cta_mouse_state: MouseStateHandle::default(),
             run_jobs_button_state: MouseStateHandle::default(),
+            reindex_button_state: MouseStateHandle::default(),
             jobs_running: false,
+            indexing: false,
             last_run_summary: None,
         };
         panel.schedule_refresh(ctx);
@@ -274,6 +289,40 @@ impl VaultPanel {
             ctx.emit(VaultPanelEvent::OpenFile { path, is_read_only });
         }
     }
+
+    /// Drop all vectors and re-embed vault notes + recent command blocks
+    /// from scratch. Runs in the background; shows a spinner while in flight.
+    fn run_reindex(&mut self, ctx: &mut ViewContext<Self>) {
+        let Some(config) = self.vault.as_ref(ctx).config().cloned() else {
+            return;
+        };
+        self.indexing = true;
+        self.last_run_summary = Some("Re-indexing\u{2026}".to_owned());
+        ctx.notify();
+
+        let vault_root = config.root.clone();
+        let db_path = database_file_path();
+        let embed_config = EmbedClientConfig::default();
+        let db_path2 = db_path.clone();
+        let embed_config2 = embed_config.clone();
+
+        let _ = ctx.spawn(
+            async move {
+                let note_indexer =
+                    VaultNoteIndexer::new(vault_root, db_path.clone(), embed_config);
+                let cmd_indexer = CommandBlockIndexer::new(db_path2, embed_config2);
+
+                let note_report = note_indexer.run_full_index().await;
+                let cmd_report = cmd_indexer.run_incremental_index().await;
+                (note_report, cmd_report)
+            },
+            |panel, (note_result, cmd_result), ctx| {
+                panel.indexing = false;
+                panel.last_run_summary = Some(format_reindex_summary(&note_result, &cmd_result));
+                ctx.notify();
+            },
+        );
+    }
 }
 
 impl Entity for VaultPanel {
@@ -290,6 +339,11 @@ impl TypedActionView for VaultPanel {
             VaultPanelAction::RunJobs => {
                 if !self.jobs_running {
                     self.run_jobs(ctx);
+                }
+            }
+            VaultPanelAction::ReIndexAll => {
+                if !self.indexing {
+                    self.run_reindex(ctx);
                 }
             }
         }
@@ -505,11 +559,50 @@ impl VaultPanel {
                 .finish()
         };
 
+        // "Re-index all" button.
+        let indexing = self.indexing;
+        let reindex_label = if indexing {
+            "Re-indexing\u{2026}"
+        } else {
+            "Re-index all"
+        };
+        let reindex_color = if indexing {
+            theme.sub_text_color(theme.background())
+        } else {
+            theme.accent()
+        };
+        let reindex_text = Text::new_inline(
+            reindex_label.to_owned(),
+            appearance.ui_font_family(),
+            BODY_FONT_SIZE,
+        )
+        .with_color(reindex_color.into())
+        .finish();
+
+        let reindex_body = Container::new(reindex_text)
+            .with_padding_top(CTA_VERTICAL_PADDING)
+            .with_padding_bottom(CTA_VERTICAL_PADDING)
+            .finish();
+
+        let reindex_hoverable =
+            Hoverable::new(self.reindex_button_state.clone(), move |_| reindex_body);
+        let reindex_button = if indexing {
+            reindex_hoverable.with_cursor(Cursor::Arrow).finish()
+        } else {
+            reindex_hoverable
+                .on_click(move |ctx, _, _| {
+                    ctx.dispatch_typed_action(VaultPanelAction::ReIndexAll);
+                })
+                .with_cursor(Cursor::PointingHand)
+                .finish()
+        };
+
         let mut header = Flex::column()
             .with_cross_axis_alignment(CrossAxisAlignment::Start)
             .with_main_axis_size(MainAxisSize::Min)
             .with_child(Container::new(heading).with_padding_bottom(4.0).finish())
-            .with_child(button);
+            .with_child(button)
+            .with_child(reindex_button);
 
         if let Some(summary) = &self.last_run_summary {
             let status = Text::new_inline(
@@ -576,6 +669,27 @@ impl VaultPanel {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn format_reindex_summary(
+    notes: &Result<IndexReport, crate::rag::index::IndexError>,
+    cmds: &Result<IndexReport, crate::rag::index::IndexError>,
+) -> String {
+    let note_part = match notes {
+        Ok(r) if r.errors.is_empty() => format!("Notes: {} files", r.files_indexed),
+        Ok(r) => format!("Notes: {} files ({} errors)", r.files_indexed, r.errors.len()),
+        Err(e) => format!("Notes error: {e}"),
+    };
+    let cmd_part = match cmds {
+        Ok(r) if r.errors.is_empty() => format!("Commands: {} chunks", r.chunks_total),
+        Ok(r) => format!(
+            "Commands: {} chunks ({} errors)",
+            r.chunks_total,
+            r.errors.len()
+        ),
+        Err(e) => format!("Commands error: {e}"),
+    };
+    format!("Re-indexed \u{2014} {note_part} \u{00b7} {cmd_part}")
+}
 
 fn format_run_summary(
     mirror: &Result<MirrorJobReport, MirrorError>,
