@@ -15,6 +15,7 @@ use super::{
     keybindings::KeybindingsView,
     mcp_servers_page::MCPServersSettingsPageView,
     network_page::NetworkPageView,
+    vault_page::VaultSettingsPageView,
     warp_drive_page::WarpDriveSettingsPageView,
     warpify_page::WarpifyPageView,
     SettingsSection,
@@ -113,6 +114,7 @@ pub enum SettingsPageViewHandle {
     Network(ViewHandle<NetworkPageView>),
     /// 云同步设置页。
     CloudSync(ViewHandle<CloudSyncPageView>),
+    VaultSettings(ViewHandle<VaultSettingsPageView>),
 }
 
 impl SettingsPageViewHandle {
@@ -133,6 +135,7 @@ impl SettingsPageViewHandle {
             ZapDrive(view_handle) => ChildView::new(view_handle).finish(),
             Network(view_handle) => ChildView::new(view_handle).finish(),
             CloudSync(view_handle) => ChildView::new(view_handle).finish(),
+            VaultSettings(view_handle) => ChildView::new(view_handle).finish(),
         }
     }
 }

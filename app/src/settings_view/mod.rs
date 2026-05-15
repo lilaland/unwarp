@@ -40,6 +40,7 @@ use settings_page::{
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
+use vault_page::VaultSettingsPageView;
 use warp_core::send_telemetry_from_ctx;
 use warp_core::{
     channel::ChannelState, context_flag::ContextFlag, features::FeatureFlag,
@@ -89,6 +90,7 @@ pub(crate) mod settings_page;
 // 一同物理删。
 // Zap Wave 7-2:`update_environment_form` 随 cloud ambient agent 主体物理删 ——
 // `terminal::view::ambient_agent::first_time_setup` 与 `cloud_environments` 一同下线。
+mod vault_page;
 mod warp_drive_page;
 mod warpify_page;
 
@@ -192,6 +194,8 @@ pub enum SettingsSection {
     EditorAndCodeReview,
     /// 云同步设置页。
     CloudSync,
+    /// unwarp vault settings — "Update brew docs" and other vault maintenance actions.
+    Vault,
     // Zap Wave 3-1:`OzCloudAPIKeys` enum variant 随 Zap Inc API key 管理 UI
     // 一同物理删。
     // Zap Wave 7-3:`CloudEnvironments` 随 ambient-agent UI 子系统物理删。
@@ -226,6 +230,7 @@ impl Display for SettingsSection {
             SettingsSection::CloudSync => crate::t!("settings-section-cloud-sync"),
             // 代理设置页面。i18n key `settings-section-network` 已在 en / zh-CN / ja 三种语言中齐全。
             SettingsSection::Network => crate::t!("settings-section-network"),
+            SettingsSection::Vault => "Vault".to_string(),
             // Zap Wave 3-1:`OzCloudAPIKeys` Display arm 随 variant 一同物理删。
             // Zap Wave 7-3:`CloudEnvironments` Display arm 随 variant 物理删。
         };
@@ -305,6 +310,7 @@ impl FromStr for SettingsSection {
             "Editor and Code Review" | "EditorAndCodeReview" => Ok(Self::EditorAndCodeReview),
             "Network" | "网络" => Ok(Self::Network),
             "CloudSync" | "Cloud Sync" | "云同步" => Ok(Self::CloudSync),
+            "Vault" => Ok(Self::Vault),
             // Zap Wave 3-1:`OzCloudAPIKeys` 随 UI 一同物理删。
             // Zap Wave 7-3:`CloudEnvironments` FromStr arm 随 variant 物理删。
             _ => Err(()),
@@ -928,6 +934,7 @@ macro_rules! update_page {
             // Issue #72: 全局 HTTP 代理设置页。
             SettingsPageViewHandle::Network(handle) => $ctx.update_view(handle, $update),
             SettingsPageViewHandle::CloudSync(handle) => $ctx.update_view(handle, $update),
+            SettingsPageViewHandle::VaultSettings(handle) => $ctx.update_view(handle, $update),
         }
     };
 }
@@ -991,6 +998,9 @@ impl SettingsView {
 
         // About page
         let about_page_handle = ctx.add_typed_action_view(AboutPageView::new);
+
+        // Vault page (unwarp)
+        let vault_page_handle = ctx.add_typed_action_view(VaultSettingsPageView::new);
 
         // AI page
         let ai_page_handle = ctx.add_typed_action_view(AISettingsPageView::new);
@@ -1081,6 +1091,7 @@ impl SettingsView {
         settings_pages.extend(vec![
             SettingsPage::new(mcp_servers_page_handle),
             SettingsPage::new(about_page_handle),
+            SettingsPage::new(vault_page_handle),
         ]);
 
         // 仅在 flag 启用时装配 Network page。
@@ -1103,6 +1114,7 @@ impl SettingsView {
             SettingsNavItem::Page(SettingsSection::Keybindings),
             SettingsNavItem::Page(SettingsSection::Warpify),
             SettingsNavItem::Page(SettingsSection::CloudSync),
+            SettingsNavItem::Page(SettingsSection::Vault),
             SettingsNavItem::Page(SettingsSection::About),
         ];
 
@@ -1703,6 +1715,7 @@ impl SettingsView {
             // Issue #72: 全局 HTTP 代理设置页。
             SettingsPageViewHandle::Network(v) => v.as_ref(app).should_render(app),
             SettingsPageViewHandle::CloudSync(v) => v.as_ref(app).should_render(app),
+            SettingsPageViewHandle::VaultSettings(v) => v.as_ref(app).should_render(app),
         }
     }
 
