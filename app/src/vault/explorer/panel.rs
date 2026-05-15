@@ -15,6 +15,7 @@ use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use warpui::platform::FilePickerConfiguration;
 use warpui::{
     elements::{
         Border, ChildView, Clipped, Container, CornerRadius, CrossAxisAlignment, Element, Flex,
@@ -76,6 +77,11 @@ pub enum VaultPanelAction {
     /// User clicked "New note" — creates an empty note in `vault/notes/`
     /// and opens it for editing.
     NewNote,
+    /// User clicked "Locate vault" — opens a folder picker to select an
+    /// existing vault directory (§10.3).
+    LocateVault,
+    /// Internal — called from the file picker callback with the chosen path.
+    InitializeWithPath(PathBuf),
 }
 
 /// Events VaultPanel emits to its parent (the LeftPanelView).
@@ -96,6 +102,7 @@ pub struct VaultPanel {
     run_jobs_button_state: MouseStateHandle,
     reindex_button_state: MouseStateHandle,
     new_note_button_state: MouseStateHandle,
+    locate_vault_button_state: MouseStateHandle,
     /// True while the manual "Run jobs" pair is in flight.
     jobs_running: bool,
     /// True while "Re-index all" is running.
@@ -169,6 +176,7 @@ impl VaultPanel {
             run_jobs_button_state: MouseStateHandle::default(),
             reindex_button_state: MouseStateHandle::default(),
             new_note_button_state: MouseStateHandle::default(),
+            locate_vault_button_state: MouseStateHandle::default(),
             jobs_running: false,
             indexing: false,
             last_run_summary: None,
@@ -301,6 +309,49 @@ impl VaultPanel {
         });
     }
 
+    // ── Vault location ────────────────────────────────────────────────────────
+
+    /// Opens a folder picker so the user can locate an existing vault (§10.3).
+    fn open_locate_picker(&mut self, ctx: &mut ViewContext<Self>) {
+        ctx.open_file_picker(
+            |result, ctx| {
+                if let Ok(paths) = result {
+                    if let Some(path_str) = paths.into_iter().next() {
+                        ctx.dispatch_typed_action(
+                            &VaultPanelAction::InitializeWithPath(PathBuf::from(path_str)),
+                        );
+                    }
+                }
+            },
+            FilePickerConfiguration::new().folders_only(),
+        );
+    }
+
+    /// Initializes the vault at `path`, keeping mirror settings from the
+    /// current configuration or falling back to defaults.
+    fn initialize_with_path(&mut self, path: PathBuf, ctx: &mut ViewContext<Self>) {
+        let Some(home_dir) = dirs::home_dir() else {
+            log::warn!("vault: cannot locate home directory");
+            return;
+        };
+        let config = match UnwarpSettings::vault_config(ctx, &home_dir) {
+            Ok(mut c) => {
+                c.root = path;
+                c
+            }
+            Err(_) => crate::vault::config::VaultConfig {
+                root: path,
+                mirror_source_root: home_dir.join(crate::vault::config::DEFAULT_MIRROR_SOURCE_REL_PATH),
+                mirror_max_depth: crate::vault::config::DEFAULT_MIRROR_MAX_DEPTH,
+            },
+        };
+        self.vault.update(ctx, |m, ctx| {
+            if let Err(e) = m.initialize(config, ctx) {
+                log::warn!("vault: locate-and-initialize failed: {e}");
+            }
+        });
+    }
+
     // ── File open ─────────────────────────────────────────────────────────────
 
     fn open_entry(&mut self, path: PathBuf, ctx: &mut ViewContext<Self>) {
@@ -395,6 +446,10 @@ impl TypedActionView for VaultPanel {
                 }
             }
             VaultPanelAction::NewNote => self.create_new_note(ctx),
+            VaultPanelAction::LocateVault => self.open_locate_picker(ctx),
+            VaultPanelAction::InitializeWithPath(path) => {
+                self.initialize_with_path(path.clone(), ctx);
+            }
         }
     }
 }
@@ -473,6 +528,25 @@ impl VaultPanel {
         .with_cursor(Cursor::PointingHand)
         .finish();
 
+        let locate_label = Text::new_inline(
+            "Locate existing vault\u{2026}".to_owned(),
+            appearance.ui_font_family(),
+            BODY_FONT_SIZE,
+        )
+        .with_color(theme.accent().into())
+        .finish();
+        let locate_cta = Hoverable::new(self.locate_vault_button_state.clone(), |_| {
+            Container::new(locate_label)
+                .with_padding_top(CTA_VERTICAL_PADDING)
+                .with_padding_bottom(CTA_VERTICAL_PADDING)
+                .finish()
+        })
+        .on_click(move |ctx, _, _| {
+            ctx.dispatch_typed_action(VaultPanelAction::LocateVault);
+        })
+        .with_cursor(Cursor::PointingHand)
+        .finish();
+
         Flex::column()
             .with_cross_axis_alignment(CrossAxisAlignment::Start)
             .with_main_axis_size(MainAxisSize::Min)
@@ -483,6 +557,7 @@ impl VaultPanel {
                     .finish(),
             )
             .with_child(cta)
+            .with_child(locate_cta)
             .finish()
     }
 
