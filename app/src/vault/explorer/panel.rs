@@ -17,13 +17,15 @@ use std::time::Duration;
 
 use warpui::{
     elements::{
-        Container, CrossAxisAlignment, Element, Flex, Hoverable, MainAxisSize, MouseStateHandle,
-        ParentElement, Text,
+        Border, ChildView, Clipped, Container, CornerRadius, CrossAxisAlignment, Element, Flex,
+        Hoverable, MainAxisSize, MouseStateHandle, ParentElement, Radius, Shrinkable, Text,
     },
     platform::Cursor,
     AppContext, Entity, FocusContext, ModelHandle, SingletonEntity, TypedActionView, View,
-    ViewContext,
+    ViewContext, ViewHandle,
 };
+
+use crate::editor::{EditorView, Event as EditorEvent, SingleLineEditorOptions};
 
 use crate::appearance::Appearance;
 use crate::persistence::database_file_path;
@@ -100,6 +102,10 @@ pub struct VaultPanel {
     indexing: bool,
     /// Short summary shown beneath the button after a manual run completes.
     last_run_summary: Option<String>,
+    /// Single-line editor used as the filename search / filter input (§5.5).
+    search_editor: ViewHandle<EditorView>,
+    /// Current (lowercased) filter text. Empty means show all.
+    search_query: String,
 }
 
 impl VaultPanel {
@@ -115,6 +121,16 @@ impl VaultPanel {
             Vec::new()
         };
         let already_ready = vault.as_ref(ctx).is_ready();
+
+        let search_editor = ctx.add_typed_action_view(|ctx| {
+            EditorView::single_line(SingleLineEditorOptions::default(), ctx)
+        });
+        ctx.subscribe_to_view(&search_editor, |me, _, event, ctx| {
+            if matches!(event, EditorEvent::Edited(_)) {
+                me.search_query = me.search_editor.as_ref(ctx).buffer_text(ctx).to_lowercase();
+                ctx.notify();
+            }
+        });
 
         ctx.subscribe_to_model(&vault, |me, _, event, ctx| match event {
             VaultManagerEvent::StateChanged { new } => {
@@ -156,6 +172,8 @@ impl VaultPanel {
             jobs_running: false,
             indexing: false,
             last_run_summary: None,
+            search_editor,
+            search_query: String::new(),
         };
         panel.schedule_refresh(ctx);
         if already_ready {
@@ -503,16 +521,35 @@ impl VaultPanel {
             .finish()
     }
 
+    /// Entries to display after applying the current search filter.
+    fn visible_entries(&self) -> Vec<&VaultEntry> {
+        if self.search_query.is_empty() {
+            self.entries.iter().collect()
+        } else {
+            self.entries
+                .iter()
+                .filter(|e| e.name.to_lowercase().contains(&self.search_query))
+                .collect()
+        }
+    }
+
     fn render_tree(&self, appearance: &Appearance, app: &AppContext) -> Box<dyn Element> {
         let mut col = Flex::column()
             .with_cross_axis_alignment(CrossAxisAlignment::Start)
             .with_main_axis_size(MainAxisSize::Min);
 
         col = col.with_child(self.render_jobs_header(appearance, app));
+        col = col.with_child(self.render_search_bar(appearance));
 
-        if self.entries.is_empty() {
+        let visible = self.visible_entries();
+        if visible.is_empty() {
+            let msg = if self.search_query.is_empty() {
+                "No files yet. Add markdown files or click \"Run jobs\"."
+            } else {
+                "No files match the filter."
+            };
             let empty_msg = Text::new_inline(
-                "No files yet. Add markdown files or click \"Run jobs\".".to_owned(),
+                msg.to_owned(),
                 appearance.ui_font_family(),
                 BODY_FONT_SIZE,
             )
@@ -525,12 +562,37 @@ impl VaultPanel {
             .finish();
             col = col.with_child(empty_msg);
         } else {
-            for entry in &self.entries {
+            for entry in visible {
                 col = col.with_child(self.render_row(entry, appearance));
             }
         }
 
         col.finish()
+    }
+
+    /// Thin search / filter input rendered above the file tree (§5.5).
+    fn render_search_bar(&self, appearance: &Appearance) -> Box<dyn Element> {
+        let theme = appearance.theme();
+        let border_color = theme.foreground().with_opacity(40);
+
+        let editor_element = Shrinkable::new(
+            1.,
+            ChildView::new(&self.search_editor).finish(),
+        )
+        .finish();
+
+        let inner = Container::new(editor_element)
+            .with_padding_left(6.0)
+            .with_padding_right(6.0)
+            .with_padding_top(3.0)
+            .with_padding_bottom(3.0)
+            .with_border(Border::all(1.0).with_border_fill(border_color))
+            .with_corner_radius(CornerRadius::with_all(Radius::Pixels(4.0)))
+            .finish();
+
+        Container::new(Clipped::new(inner).finish())
+            .with_padding_bottom(SECTION_SPACING)
+            .finish()
     }
 
     /// Header row: vault name, "Run jobs" button, and optional last-run status.

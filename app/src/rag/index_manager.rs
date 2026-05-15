@@ -23,7 +23,10 @@ use crate::{
     persistence::database_file_path,
     rag::{
         embed::EmbedClientConfig,
-        index::vault_notes::VaultNoteIndexer,
+        index::{
+            conversations::ConversationIndexer,
+            vault_notes::VaultNoteIndexer,
+        },
     },
     settings::{UnwarpSettings, DEFAULT_EMBEDDING_DIMENSIONS},
     vault::{
@@ -90,12 +93,16 @@ impl RagIndexManager {
                     let embed_config = EmbedClientConfig::default();
                     let expected_dim = embed_dim_from_settings(ctx);
 
+                    let db_path2 = db_path.clone();
+                    let embed_config2 = embed_config.clone();
+
                     ctx.spawn(
                         async move {
-                            let indexer =
+                            // Vault notes — full index with dimension validation.
+                            let note_indexer =
                                 VaultNoteIndexer::new(vault_root, db_path, embed_config)
                                     .with_expected_dimensions(expected_dim);
-                            match indexer.run_full_index().await {
+                            match note_indexer.run_full_index().await {
                                 Ok(report) => {
                                     if report.files_indexed > 0 || !report.errors.is_empty() {
                                         log::info!("rag: vault startup index: {report}");
@@ -117,6 +124,23 @@ impl RagIndexManager {
                                 }
                                 Err(e) => {
                                     log::warn!("rag: vault startup index failed: {e}");
+                                }
+                            }
+
+                            // Conversations — incremental index of new messages.
+                            let conv_indexer =
+                                ConversationIndexer::new(db_path2, embed_config2);
+                            match conv_indexer.run_incremental_index().await {
+                                Ok(report) if report.files_indexed > 0 => {
+                                    log::info!(
+                                        "rag: conversation startup index: {} messages ({} chunks)",
+                                        report.files_indexed,
+                                        report.chunks_total
+                                    );
+                                }
+                                Ok(_) => {}
+                                Err(e) => {
+                                    log::warn!("rag: conversation startup index failed: {e}");
                                 }
                             }
                         },
