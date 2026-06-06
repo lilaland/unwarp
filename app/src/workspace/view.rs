@@ -1,15 +1,16 @@
-mod build_plan_migration_modal;
+// mod build_plan_migration_modal; // module removed upstream
 pub(crate) mod codex_modal;
 pub mod conversation_list;
 #[cfg(enable_crash_recovery)]
 mod crash_recovery;
-pub(crate) mod free_tier_limit_hit_modal;
+// pub(crate) mod free_tier_limit_hit_modal; // module removed upstream
 pub mod global_search;
 pub(crate) mod launch_modal;
 pub(crate) mod left_panel;
 pub(crate) mod onboarding;
-pub(crate) mod openwarp_launch_modal;
+pub(crate) mod zap_launch_modal;
 pub(crate) mod right_panel;
+pub(crate) mod server_file_browser;
 mod startup_directory;
 #[cfg(test)]
 #[path = "view_test.rs"]
@@ -107,16 +108,14 @@ use crate::terminal::cli_agent_sessions::{CLIAgentSessionsModel, CLIAgentSession
 use crate::workspace::header_toolbar_editor::{HeaderToolbarEditorEvent, HeaderToolbarEditorModal};
 use crate::workspace::header_toolbar_item::HeaderToolbarItemKind;
 use crate::workspace::tab_settings::TabCloseButtonPosition;
-use crate::workspace::view::build_plan_migration_modal::{
-    BuildPlanMigrationModal, BuildPlanMigrationModalEvent,
-};
+// use crate::workspace::view::build_plan_migration_modal::{
+//     BuildPlanMigrationModal, BuildPlanMigrationModalEvent,
+// }; // module removed upstream
 use crate::workspace::view::codex_modal::{CodexModal, CodexModalEvent};
-use crate::workspace::view::free_tier_limit_hit_modal::{
-    FreeTierLimitHitModal, FreeTierLimitHitModalEvent,
-};
-use crate::workspace::view::openwarp_launch_modal::{
-    OpenWarpLaunchModal, OpenWarpLaunchModalEvent,
-};
+// use crate::workspace::view::free_tier_limit_hit_modal::{
+//     FreeTierLimitHitModal, FreeTierLimitHitModalEvent,
+// }; // module removed upstream
+use crate::workspace::view::zap_launch_modal::{ZapLaunchModal, ZapLaunchModalEvent};
 use crate::workspace::{ForkFromExchange, ForkedConversationDestination};
 use crate::BlocklistAIHistoryModel;
 
@@ -138,7 +137,7 @@ use crate::auth::{AuthManager, AuthManagerEvent};
 use crate::auth::{
     AuthOverrideWarningModal, AuthOverrideWarningModalEvent, AuthOverrideWarningModalVariant,
 };
-use crate::auth::{AuthRedirectPayload, AuthView, AuthViewEvent, AuthViewVariant};
+use crate::auth::{AuthView, AuthViewEvent, AuthViewVariant};
 #[cfg(feature = "local_fs")]
 use crate::code::editor_management::CodeManager;
 use crate::code::editor_management::CodeSource;
@@ -215,7 +214,7 @@ use crate::drive::import::modal::{ImportModal, ImportModalEvent};
 use crate::drive::workflows::arguments::ArgumentsState;
 use crate::drive::workflows::modal::{WorkflowModal, WorkflowModalEvent};
 use crate::drive::{
-    DriveObjectType, DrivePanel, DrivePanelEvent, ObjectTypeAndId, OpenWarpDriveObjectSettings,
+    DriveObjectType, DrivePanel, DrivePanelEvent, ObjectTypeAndId, ZapDriveObjectSettings,
 };
 use crate::experiments::{BlockOnboarding, Experiment};
 use crate::menu::{
@@ -938,10 +937,10 @@ pub struct Workspace {
     theme_deletion_modal: ViewHandle<ThemeDeletionModal>,
     suggested_agent_mode_workflow_modal: ViewHandle<SuggestedAgentModeWorkflowModal>,
     suggested_rule_modal: ViewHandle<SuggestedRuleModal>,
-    openwarp_launch_modal: ViewHandle<OpenWarpLaunchModal>,
-    build_plan_migration_modal: ViewHandle<BuildPlanMigrationModal>,
+    zap_launch_modal: ViewHandle<ZapLaunchModal>,
+    // build_plan_migration_modal removed upstream
     codex_modal: ViewHandle<CodexModal>,
-    free_tier_limit_hit_modal: ViewHandle<FreeTierLimitHitModal>,
+    // free_tier_limit_hit_modal removed upstream
     free_tier_limit_check_triggered: bool,
     toast_stack: ViewHandle<DismissibleToastStack<WorkspaceAction>>,
     agent_toast_stack: ViewHandle<AgentToastStack>,
@@ -1356,7 +1355,7 @@ impl Workspace {
                 if let Some(id) = id_to_force_expand {
                     self.open_notebook(
                         &NotebookSource::Existing(id),
-                        &OpenWarpDriveObjectSettings::default(),
+                        &ZapDriveObjectSettings::default(),
                         ctx,
                         true,
                     );
@@ -1373,7 +1372,7 @@ impl Workspace {
                 if let Some(id) = id_to_force_expand {
                     self.open_workflow_with_existing(
                         id,
-                        &OpenWarpDriveObjectSettings::default(),
+                        &ZapDriveObjectSettings::default(),
                         ctx,
                     );
                     ObjectStoreModel::handle(ctx).update(ctx, |cloud_model, ctx| {
@@ -2513,21 +2512,13 @@ impl Workspace {
         let resource_center_view =
             Self::build_resource_center_view(ctx, tips_completed.clone(), changelog_model.clone());
 
-        let build_plan_migration_modal = ctx.add_typed_action_view(BuildPlanMigrationModal::new);
-        ctx.subscribe_to_view(&build_plan_migration_modal, |me, _, event, ctx| {
-            me.handle_build_plan_migration_modal_event(event, ctx);
-        });
-
+        // build_plan_migration_modal removed upstream
         let codex_modal = ctx.add_typed_action_view(CodexModal::new);
         ctx.subscribe_to_view(&codex_modal, |me, _, event, ctx| {
             me.handle_codex_modal_event(event, ctx);
         });
 
-        let free_tier_limit_hit_modal = ctx.add_typed_action_view(FreeTierLimitHitModal::new);
-        ctx.subscribe_to_view(&free_tier_limit_hit_modal, |me, _, event, ctx| {
-            me.handle_free_tier_limit_modal_event(event, ctx);
-        });
-
+        // free_tier_limit_hit_modal removed upstream
         let require_login_modal = Self::build_require_login_modal(ctx);
 
         let auth_override_warning_modal = Self::build_auth_override_warning_modal(ctx);
@@ -2543,9 +2534,9 @@ impl Workspace {
 
         let suggested_rule_modal = Self::build_suggested_rule_modal(ctx);
 
-        let openwarp_launch_view = ctx.add_typed_action_view(OpenWarpLaunchModal::new);
+        let openwarp_launch_view = ctx.add_typed_action_view(ZapLaunchModal::new);
         ctx.subscribe_to_view(&openwarp_launch_view, |me, _, event, ctx| {
-            me.handle_openwarp_launch_modal_event(event, ctx);
+            me.handle_zap_launch_modal_event(event, ctx);
         });
 
         let launch_config_save_modal = Self::build_launch_config_save_modal(ctx);
@@ -2844,13 +2835,12 @@ impl Workspace {
                 // The model has already determined which window should show the modal.
                 let model_ref = model.as_ref(ctx);
                 if model_ref.target_window_id() == Some(ctx.window_id()) {
-                    if model_ref.is_openwarp_launch_modal_open() {
-                        me.focus_openwarp_launch_modal(ctx);
+                    if model_ref.is_zap_launch_modal_open() {
+                        me.focus_zap_launch_modal(ctx);
                     } else if model_ref.is_hoa_onboarding_open() {
                         me.show_hoa_onboarding_flow(ctx);
-                    } else if model_ref.is_build_plan_migration_modal_open() {
-                        me.focus_build_plan_migration_modal(ctx);
                     }
+                    // is_build_plan_migration_modal_open removed upstream
                 }
             }
             ctx.notify();
@@ -2924,7 +2914,7 @@ impl Workspace {
             auth_override_warning_modal,
             suggested_agent_mode_workflow_modal,
             suggested_rule_modal,
-            build_plan_migration_modal,
+            // build_plan_migration_modal removed upstream
             require_login_modal,
             workflow_modal,
             theme_creator_modal,
@@ -2969,9 +2959,9 @@ impl Workspace {
             #[cfg(target_family = "wasm")]
             transcript_details_panel,
             tab_fixed_width: None,
-            openwarp_launch_modal: openwarp_launch_view,
+            zap_launch_modal: openwarp_launch_view,
             codex_modal,
-            free_tier_limit_hit_modal,
+            // free_tier_limit_hit_modal removed upstream
             free_tier_limit_check_triggered: false,
             lightbox_view: None,
             hoa_onboarding_flow: None,
@@ -3552,9 +3542,10 @@ impl Workspace {
                 LeftPanelDisplayedTab::GlobalSearch => ToolPanelView::GlobalSearch {
                     entry_focus: GlobalSearchEntryFocus::Results,
                 },
-                LeftPanelDisplayedTab::WarpDrive => ToolPanelView::WarpDrive,
+                LeftPanelDisplayedTab::ZapDrive => ToolPanelView::ZapDrive,
                 LeftPanelDisplayedTab::ConversationListView => ToolPanelView::ConversationListView,
                 LeftPanelDisplayedTab::SshManager => ToolPanelView::SshManager,
+                LeftPanelDisplayedTab::ServerFileBrowser => ToolPanelView::ServerFileBrowser,
                 LeftPanelDisplayedTab::SkillManager => ToolPanelView::SkillManager,
                 LeftPanelDisplayedTab::OllamaMonitor => ToolPanelView::OllamaMonitor,
                 LeftPanelDisplayedTab::VaultExplorer => ToolPanelView::VaultExplorer,
@@ -4371,7 +4362,7 @@ impl Workspace {
             }
 
             // If the agent management view is open, we want to close it when we activate a new tab.
-            if FeatureFlag::AgentManagementView.is_enabled() {
+            if false /* FeatureFlag::AgentManagementView removed upstream */ {
                 self.set_is_agent_management_view_open(false, ctx);
             }
 
@@ -4499,7 +4490,7 @@ impl Workspace {
 
         // If the agent management view is open, we want to close it when we change focus to rename a tab.
         // This function doesn't call `activate_tab_internal`, which is why we need the extra check here.
-        if FeatureFlag::AgentManagementView.is_enabled() {
+        if false /* FeatureFlag::AgentManagementView removed upstream */ {
             self.set_is_agent_management_view_open(false, ctx);
         }
 
@@ -5250,7 +5241,7 @@ impl Workspace {
                 let pane_group = self.active_tab_pane_group().clone();
                 self.handle_file_tree_event(pane_group, pane_group_event, ctx);
             }
-            LeftPanelEvent::WarpDrive(drive_event) => {
+            LeftPanelEvent::ZapDrive(drive_event) => {
                 self.handle_warp_drive_event(drive_event, ctx);
             }
             LeftPanelEvent::OpenFileWithTarget {
@@ -5309,6 +5300,15 @@ impl Workspace {
             }
             LeftPanelEvent::OpenSshTerminal { node_id, server } => {
                 self.open_ssh_terminal(node_id.clone(), server.clone(), ctx);
+            }
+            LeftPanelEvent::OpenSftpPane { node_id: _, server: _ } => {
+                // SFTP pane opening not yet implemented
+            }
+            LeftPanelEvent::ServerFileBrowser(_) => {
+                // ServerFileBrowser events handled by left panel internally
+            }
+            LeftPanelEvent::OpenRemoteFile { remote_path: _ } => {
+                // Remote file opening not yet implemented in this path
             }
         }
     }
@@ -5515,10 +5515,10 @@ impl Workspace {
     #[cfg(not(target_family = "wasm"))]
     fn view_logs(&mut self, ctx: &mut ViewContext<Self>) {
         ctx.spawn(
-            async { tokio::task::spawn_blocking(warp_logging::create_log_bundle_zip).await },
+            async { tokio::task::spawn_blocking(|| warp_logging::create_log_bundle_zip(Default::default())).await },
             |me, result, ctx| match result {
                 Ok(Ok(path)) => {
-                    ctx.open_file_path_in_explorer(&path);
+                    ctx.open_file_path_in_explorer(path.as_path());
                 }
                 Ok(Err(err)) => {
                     let error_message = format!("Failed to create log bundle: {err}");
@@ -6164,17 +6164,9 @@ impl Workspace {
 
     fn check_and_trigger_telemetry_banner_for_existing_users(
         &mut self,
-        ctx: &mut ViewContext<Self>,
+        _ctx: &mut ViewContext<Self>,
     ) {
-        if FeatureFlag::GlobalAIAnalyticsBanner.is_enabled()
-            && PrivacySettings::as_ref(ctx).is_telemetry_enabled
-        {
-            if let Some(terminal_view_handle) = self.active_session_view(ctx) {
-                terminal_view_handle.update(ctx, |terminal_view, ctx| {
-                    terminal_view.insert_telemetry_banner(true, ctx);
-                });
-            }
-        }
+        // FeatureFlag::GlobalAIAnalyticsBanner and insert_telemetry_banner removed upstream
     }
 
     fn should_trigger_get_started_onboarding(&self, ctx: &mut ViewContext<Self>) -> bool {
@@ -6277,7 +6269,7 @@ impl Workspace {
             ObjectType::Notebook => {
                 self.open_notebook(
                     &NotebookSource::Existing(sync_id),
-                    &OpenWarpDriveObjectSettings::default(),
+                    &ZapDriveObjectSettings::default(),
                     ctx,
                     true,
                 );
@@ -6285,7 +6277,7 @@ impl Workspace {
             ObjectType::Workflow => {
                 self.open_workflow_in_pane(
                     &WorkflowOpenSource::Existing(sync_id),
-                    &OpenWarpDriveObjectSettings::default(),
+                    &ZapDriveObjectSettings::default(),
                     WorkflowViewMode::View,
                     ctx,
                 );
@@ -6314,7 +6306,7 @@ impl Workspace {
     pub fn open_notebook(
         &mut self,
         source: &NotebookSource,
-        settings: &OpenWarpDriveObjectSettings,
+        settings: &ZapDriveObjectSettings,
         ctx: &mut ViewContext<Self>,
         default_to_new_pane: bool,
     ) {
@@ -6336,7 +6328,7 @@ impl Workspace {
                 );
             }
             // TODO(openwarp-cloud-removal Phase 5): invitee_email/source 这条
-            // notebook 邀请链路已无 UI 出口,但 `OpenWarpDriveObjectSettings.invitee_email`
+            // notebook 邀请链路已无 UI 出口,但 `ZapDriveObjectSettings.invitee_email`
             // 仍由 URL handler / drag-drop 链路传入。Phase 5 退役 invitee 概念时
             // 把字段从 settings 结构里也删掉。
             let _ = settings;
@@ -6391,7 +6383,7 @@ impl Workspace {
     pub fn open_workflow_from_intent(
         &mut self,
         workflow_id: SyncId,
-        settings: &OpenWarpDriveObjectSettings,
+        settings: &ZapDriveObjectSettings,
         ctx: &mut ViewContext<Self>,
     ) {
         // If running workflows is supported, do so. Otherwise, or if the workflow isn't in memory,
@@ -6434,7 +6426,7 @@ impl Workspace {
     pub fn open_workflow_in_pane(
         &mut self,
         source: &WorkflowOpenSource,
-        settings: &OpenWarpDriveObjectSettings,
+        settings: &ZapDriveObjectSettings,
         mode: WorkflowViewMode,
         ctx: &mut ViewContext<Self>,
     ) {
@@ -6737,15 +6729,15 @@ impl Workspace {
                         .is_pane_hidden_for_close(*pane_id)
                 });
             // If the tabbed editor view is enabled and there is an existing CodeView, we should group the newly opened file into this view.
-            if let (Some(path), Some((pane_id, code_view))) = (source.path(), code_view) {
+            if let (Some(location), Some((pane_id, code_view))) = (source.location(), code_view) {
                 code_view.update(ctx, |code_view, ctx| {
                     if preview {
-                        code_view.open_in_preview_or_promote_and_jump(path, line_col, ctx);
+                        code_view.open_in_preview_or_promote_and_jump(location.clone(), line_col, ctx);
                     } else {
-                        code_view.open_or_focus_existing(Some(path), line_col, ctx);
+                        code_view.open_or_focus_existing(Some(location), line_col, ctx);
                     }
                     for extra in additional_paths {
-                        code_view.open_or_focus_existing(Some(extra.clone()), None, ctx);
+                        code_view.open_or_focus_existing(Some(crate::code::buffer_location::BufferLocation::Local(extra.clone())), None, ctx);
                     }
                 });
                 // Only focus the pane for non-preview opens
@@ -6759,10 +6751,10 @@ impl Workspace {
         } else {
             // When grouping is off, avoid opening duplicate code panes for the same file in the
             // current pane group. Instead, focus the existing pane and jump.
-            if let Some(path) = source.path() {
+            if let Some(location) = source.location() {
                 let pane_group_id = self.active_tab_pane_group().id();
                 let existing_locator = CodeManager::handle(ctx).read(ctx, |manager, _| {
-                    manager.get_locator_for_path_in_tab(pane_group_id, path.as_path())
+                    manager.get_locator_for_location_in_tab(pane_group_id, &location)
                 });
 
                 if let Some(locator) = existing_locator {
@@ -6775,13 +6767,13 @@ impl Workspace {
                             code_view.update(ctx, |code_view, ctx| {
                                 if preview {
                                     code_view.open_in_preview_or_promote_and_jump(
-                                        path.clone(),
+                                        location.clone(),
                                         line_col,
                                         ctx,
                                     );
                                 } else {
                                     code_view.open_or_focus_existing(
-                                        Some(path.clone()),
+                                        Some(location.clone()),
                                         line_col,
                                         ctx,
                                     );
@@ -6789,7 +6781,7 @@ impl Workspace {
 
                                 for extra in additional_paths {
                                     code_view.open_or_focus_existing(
-                                        Some(extra.clone()),
+                                        Some(crate::code::buffer_location::BufferLocation::Local(extra.clone())),
                                         None,
                                         ctx,
                                     );
@@ -6847,7 +6839,7 @@ impl Workspace {
             if let Some(code_view) = code_view_handle {
                 code_view.update(ctx, |code_view, ctx| {
                     for path in additional_paths {
-                        code_view.open_or_focus_existing(Some(path.clone()), None, ctx);
+                        code_view.open_or_focus_existing(Some(crate::code::buffer_location::BufferLocation::Local(path.clone())), None, ctx);
                     }
                 });
             }
@@ -7171,7 +7163,7 @@ impl Workspace {
             );
             self.tips_completed.update(ctx, |tips_completed, ctx| {
                 mark_feature_used_and_write_to_user_defaults(
-                    Tip::Action(TipAction::OpenWarpDrive),
+                    Tip::Action(TipAction::ZapDrive),
                     tips_completed,
                     ctx,
                 );
@@ -8782,7 +8774,7 @@ impl Workspace {
                     // Proc same behavior as DrivePanelEvent::RunWorkflow
                     self.run_cloud_workflow_in_active_input(
                         workflow.clone(),
-                        WorkflowSelectionSource::WarpDrive,
+                        WorkflowSelectionSource::ZapDrive,
                         TerminalSessionFallbackBehavior::default(),
                         ctx,
                     );
@@ -9006,9 +8998,7 @@ impl Workspace {
             AuthManagerEvent::AttemptedLoginGatedFeature { auth_view_variant } => {
                 self.open_require_login_modal(*auth_view_variant, ctx)
             }
-            AuthManagerEvent::LoginOverrideDetected(interrupted_auth_payload) => {
-                self.open_auth_override_warning_modal(interrupted_auth_payload.clone(), ctx);
-            }
+            // AuthManagerEvent::LoginOverrideDetected removed upstream
             AuthManagerEvent::AuthComplete => {
                 // Only show the telemetry banner if the user is an existing user. The new user flow
                 // for this is handled in the onboarding flow.
@@ -10138,7 +10128,7 @@ impl Workspace {
     pub fn add_tab_for_cloud_notebook(
         &mut self,
         notebook_id: SyncId,
-        settings: &OpenWarpDriveObjectSettings,
+        settings: &ZapDriveObjectSettings,
         ctx: &mut ViewContext<Self>,
     ) {
         // TODO: We should validate that this notebook exists and fallback if it doesn't
@@ -10156,7 +10146,7 @@ impl Workspace {
     fn add_tab_for_cloud_workflow(
         &mut self,
         workflow_id: SyncId,
-        settings: &OpenWarpDriveObjectSettings,
+        settings: &ZapDriveObjectSettings,
         ctx: &mut ViewContext<Self>,
     ) {
         let panes_layout = PanesLayout::Snapshot(Box::new(PaneNodeSnapshot::Leaf(LeafSnapshot {
@@ -11497,19 +11487,7 @@ impl Workspace {
         ctx.notify();
     }
 
-    fn open_auth_override_warning_modal(
-        &mut self,
-        auth_payload: AuthRedirectPayload,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        self.close_all_overlays(ctx);
-        self.auth_override_warning_modal.update(ctx, |modal, _| {
-            modal.set_interrupted_auth_payload(auth_payload);
-        });
-        self.current_workspace_state.is_auth_override_modal_open = true;
-        ctx.focus(&self.auth_override_warning_modal);
-        ctx.notify();
-    }
+    // open_auth_override_warning_modal removed (AuthRedirectPayload removed upstream)
 
     fn open_palette(
         &mut self,
@@ -11548,7 +11526,7 @@ impl Workspace {
                 _ => self.open_navigation_palette(ctx),
             },
             PaletteMode::LaunchConfig => self.open_launch_config_palette(ctx),
-            PaletteMode::WarpDrive => self.open_warp_drive_palette(ctx),
+            PaletteMode::ZapDrive => self.open_warp_drive_palette(ctx),
             PaletteMode::Files => self.open_files_palette(ctx),
             PaletteMode::Conversations => self.open_conversations_palette(ctx),
         }
@@ -11641,7 +11619,7 @@ impl Workspace {
             }
             CommandPaletteEvent::OpenNotebook { id } => self.open_notebook(
                 &NotebookSource::Existing(*id),
-                &OpenWarpDriveObjectSettings::default(),
+                &ZapDriveObjectSettings::default(),
                 ctx,
                 true,
             ),
@@ -11687,7 +11665,7 @@ impl Workspace {
     fn view_in_warp_drive(&mut self, item_id: WarpDriveItemId, ctx: &mut ViewContext<Self>) {
         self.open_left_panel(ctx);
         self.left_panel_view.update(ctx, |left_panel, ctx| {
-            left_panel.handle_action(&LeftPanelAction::WarpDrive, ctx);
+            left_panel.handle_action(&LeftPanelAction::ZapDrive, ctx);
         });
 
         if let WarpDriveItemId::Object(object_id) = item_id {
@@ -11803,21 +11781,9 @@ impl Workspace {
         ctx: &mut ViewContext<Self>,
     ) {
         match event {
-            SettingsViewEvent::CheckForUpdate => {
-                self.manual_check_for_update(ctx);
-            }
-            SettingsViewEvent::OpenWarpDrive => {
-                self.close_all_overlays(ctx);
-                self.open_or_toggle_warp_drive(
-                    false, /* toggle */
-                    false, /* explicit_user_action */
-                    ctx,
-                );
-                ctx.notify();
-            }
-            SettingsViewEvent::SignupAnonymousUser => {
-                self.initiate_user_signup(AnonymousUserSignupEntrypoint::SignUpButton, ctx);
-            }
+            // SettingsViewEvent::CheckForUpdate removed upstream
+            // SettingsViewEvent::OpenWarpDrive removed upstream
+            // SettingsViewEvent::SignupAnonymousUser removed upstream
             SettingsViewEvent::Pane(_) | SettingsViewEvent::StartResize => {}
             SettingsViewEvent::ShowToast { message, flavor } => {
                 self.toast_stack.update(ctx, |toast_stack, ctx| {
@@ -12058,7 +12024,7 @@ impl Workspace {
             pane_group::Event::OpenCloudWorkflowForEdit(workflow_id) => self
                 .open_workflow_with_existing(
                     *workflow_id,
-                    &OpenWarpDriveObjectSettings::default(),
+                    &ZapDriveObjectSettings::default(),
                     ctx,
                 ),
             pane_group::Event::OpenWorkflowModalWithTemporary(workflow) => {
@@ -12120,7 +12086,7 @@ impl Workspace {
             } => {
                 self.move_to_drive_space(*object_type_and_id, *space, ctx);
             }
-            pane_group::Event::OpenWarpDriveLink {
+            pane_group::Event::ZapDriveLink {
                 open_warp_drive_args,
             } => {
                 let object_found = ObjectStoreModel::as_ref(ctx)
@@ -12535,7 +12501,7 @@ impl Workspace {
                                                             |file_view, ctx| {
                                                                 let moved_file_path = file_view
                                                                     .tab_at(*editor_tab_index)
-                                                                    .and_then(|t| t.path());
+                                                                    .and_then(|t| t.location().cloned());
 
                                                                 file_view.remove_tab_for_move(
                                                                     *editor_tab_index,
@@ -12684,7 +12650,7 @@ impl Workspace {
                 ctx.notify();
             }
             pane_group::Event::ClearHoveredTabIndex => self.hovered_tab_index = None,
-            pane_group::Event::OpenWarpDriveObjectInPane(uid) => {
+            pane_group::Event::ZapDriveObjectInPane(uid) => {
                 self.open_warp_drive_object_in_new_pane(uid, ctx);
             }
             pane_group::Event::OpenSuggestedAgentModeWorkflowModal { workflow_and_id } => {
@@ -12693,9 +12659,7 @@ impl Workspace {
             pane_group::Event::OpenSuggestedRuleModal { rule_and_id } => {
                 self.open_suggested_rule_modal(rule_and_id, ctx);
             }
-            pane_group::Event::AnonymousUserSignup => {
-                self.initiate_user_signup(AnonymousUserSignupEntrypoint::RenotificationBlock, ctx);
-            }
+            // pane_group::Event::AnonymousUserSignup removed upstream
             pane_group::Event::OpenPalette {
                 mode,
                 source,
@@ -12846,9 +12810,7 @@ impl Workspace {
                     toast_stack.add_ephemeral_toast(toast, ctx);
                 });
             }
-            pane_group::Event::SignupAnonymousUser { entrypoint } => {
-                self.initiate_user_signup(*entrypoint, ctx);
-            }
+            // pane_group::Event::SignupAnonymousUser removed upstream
             pane_group::Event::OpenThemeChooser => {
                 self.show_theme_chooser_for_custom_theme(ctx);
             }
@@ -12893,7 +12855,7 @@ impl Workspace {
                     self.left_panel_view
                         .read(ctx, |left_panel, _| match target_view {
                             LeftPanelTargetView::FileTree => left_panel.is_file_tree_active(),
-                            LeftPanelTargetView::WarpDrive => left_panel.is_warp_drive_active(),
+                            LeftPanelTargetView::ZapDrive => left_panel.is_warp_drive_active(),
                         });
 
                 if self.active_tab_pane_group().as_ref(ctx).left_panel_open && is_target_active {
@@ -12908,7 +12870,7 @@ impl Workspace {
                     self.left_panel_view.update(ctx, |left_panel, ctx| {
                         let action = match target_view {
                             LeftPanelTargetView::FileTree => LeftPanelAction::ProjectExplorer,
-                            LeftPanelTargetView::WarpDrive => LeftPanelAction::WarpDrive,
+                            LeftPanelTargetView::ZapDrive => LeftPanelAction::ZapDrive,
                         };
                         left_panel.handle_action_with_force_open(&action, *force_open, ctx);
                     });
@@ -13035,8 +12997,10 @@ impl Workspace {
                     });
                 }
             }
-            pane_group::Event::FreeTierLimitCheckTriggered => {
-                self.free_tier_limit_check_triggered = true;
+            // pane_group::Event::FreeTierLimitCheckTriggered removed upstream
+            #[cfg(all(feature = "local_tty", feature = "local_fs"))]
+            pane_group::Event::OpenRemoteFileFromTerminal { remote_path: _, line_col: _ } => {
+                // Remote file opening from terminal not yet implemented
             }
         }
     }
@@ -13385,7 +13349,7 @@ impl Workspace {
             DrivePanelEvent::RunWorkflow(workflow) => {
                 self.run_cloud_workflow_in_active_input(
                     workflow.as_ref().clone(),
-                    WorkflowSelectionSource::WarpDrive,
+                    WorkflowSelectionSource::ZapDrive,
                     TerminalSessionFallbackBehavior::default(),
                     ctx,
                 );
@@ -13400,9 +13364,7 @@ impl Workspace {
                     ctx,
                 );
             }
-            DrivePanelEvent::OpenTeamSettingsPage => {
-                self.show_settings_with_section(Some(SettingsSection::Teams), ctx);
-            }
+            // DrivePanelEvent::OpenTeamSettingsPage removed upstream
             DrivePanelEvent::OpenImportModal {
                 owner,
                 initial_folder_id,
@@ -13416,27 +13378,27 @@ impl Workspace {
             DrivePanelEvent::OpenWorkflowModalWithWorkflowObject(workflow_id) => {
                 self.open_workflow_with_existing(
                     *workflow_id,
-                    &OpenWarpDriveObjectSettings::default(),
+                    &ZapDriveObjectSettings::default(),
                     ctx,
                 );
             }
             DrivePanelEvent::OpenSearch => {
                 self.open_palette_action(
-                    PaletteMode::WarpDrive,
-                    PaletteSource::WarpDrive,
+                    PaletteMode::ZapDrive,
+                    PaletteSource::ZapDrive,
                     None,
                     ctx,
                 );
             }
             DrivePanelEvent::OpenNotebook(source) => {
-                self.open_notebook(source, &OpenWarpDriveObjectSettings::default(), ctx, true)
+                self.open_notebook(source, &ZapDriveObjectSettings::default(), ctx, true)
             }
             DrivePanelEvent::OpenEnvVarCollection(source) => {
                 self.open_env_var_collection(source, false, ctx)
             }
             DrivePanelEvent::OpenWorkflowInPane(source, mode) => self.open_workflow_in_pane(
                 source,
-                &OpenWarpDriveObjectSettings::default(),
+                &ZapDriveObjectSettings::default(),
                 *mode,
                 ctx,
             ),
@@ -13444,7 +13406,7 @@ impl Workspace {
                 self.open_ai_fact_collection_pane(None, None, ctx);
                 send_telemetry_from_ctx!(
                     TelemetryEvent::KnowledgePaneOpened {
-                        entrypoint: KnowledgePaneEntrypoint::WarpDrive,
+                        entrypoint: KnowledgePaneEntrypoint::ZapDrive,
                     },
                     ctx
                 );
@@ -13454,7 +13416,7 @@ impl Workspace {
 
                 send_telemetry_from_ctx!(
                     TelemetryEvent::MCPServerCollectionPaneOpened {
-                        entrypoint: MCPServerCollectionPaneEntrypoint::WarpDrive,
+                        entrypoint: MCPServerCollectionPaneEntrypoint::ZapDrive,
                     },
                     ctx
                 );
@@ -13857,7 +13819,7 @@ impl Workspace {
                     AcceptNotebook(sync_id) => {
                         self.open_notebook(
                             &NotebookSource::Existing(*sync_id),
-                            &OpenWarpDriveObjectSettings::default(),
+                            &ZapDriveObjectSettings::default(),
                             ctx,
                             true,
                         );
@@ -14417,14 +14379,10 @@ impl Workspace {
     /// settings with the intent of inviting a user.
     pub fn show_team_settings_page_with_email_invite(
         &mut self,
-        email_invite: Option<&String>,
-        ctx: &mut ViewContext<Self>,
+        _email_invite: Option<&String>,
+        _ctx: &mut ViewContext<Self>,
     ) {
-        self.show_settings_with_section(Some(SettingsSection::Teams), ctx);
-
-        self.settings_pane.update(ctx, |view, ctx| {
-            view.open_teams_page_email_invite(email_invite, ctx);
-        });
+        // SettingsSection::Teams and open_teams_page_email_invite removed upstream
     }
 
     /// Opens the MCP servers settings page, optionally triggering auto-install of a gallery MCP.
@@ -14715,15 +14673,15 @@ impl Workspace {
         }
     }
 
-    fn handle_openwarp_launch_modal_event(
+    fn handle_zap_launch_modal_event(
         &mut self,
-        event: &OpenWarpLaunchModalEvent,
+        event: &ZapLaunchModalEvent,
         ctx: &mut ViewContext<Self>,
     ) {
         match event {
-            OpenWarpLaunchModalEvent::Close => {
+            ZapLaunchModalEvent::Close => {
                 OneTimeModalModel::handle(ctx).update(ctx, |model, ctx| {
-                    model.mark_openwarp_launch_modal_dismissed(ctx);
+                    model.mark_zap_launch_modal_dismissed(ctx);
                 });
                 self.focus_active_tab(ctx);
                 ctx.notify();
@@ -14731,32 +14689,7 @@ impl Workspace {
         }
     }
 
-    fn handle_build_plan_migration_modal_event(
-        &mut self,
-        event: &BuildPlanMigrationModalEvent,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        match event {
-            BuildPlanMigrationModalEvent::Close => {
-                OneTimeModalModel::handle(ctx).update(ctx, |model, ctx| {
-                    model.mark_build_plan_migration_modal_dismissed(ctx);
-                });
-                self.focus_active_tab(ctx);
-                ctx.notify();
-            }
-            BuildPlanMigrationModalEvent::ShowToast { message, flavor } => {
-                use crate::view_components::{DismissibleToast, ToastFlavor};
-                self.toast_stack.update(ctx, |toast_stack, ctx| {
-                    let toast = match flavor {
-                        ToastFlavor::Success => DismissibleToast::success(message.clone()),
-                        ToastFlavor::Error => DismissibleToast::error(message.clone()),
-                        _ => DismissibleToast::error(message.clone()),
-                    };
-                    toast_stack.add_ephemeral_toast(toast, ctx);
-                });
-            }
-        }
-    }
+    // handle_build_plan_migration_modal_event removed (module deleted upstream)
 
     fn handle_codex_modal_event(&mut self, event: &CodexModalEvent, ctx: &mut ViewContext<Self>) {
         use crate::ai::blocklist::agent_view::AgentViewEntryOrigin;
@@ -14961,66 +14894,11 @@ impl Workspace {
         }
     }
 
-    fn handle_free_tier_limit_modal_event(
-        &mut self,
-        event: &FreeTierLimitHitModalEvent,
-        ctx: &mut ViewContext<Self>,
-    ) {
-        match event {
-            FreeTierLimitHitModalEvent::MaybeOpen => {
-                if self.free_tier_limit_check_triggered
-                    && self.check_and_open_free_tier_limit_modal(ctx)
-                {
-                    self.free_tier_limit_check_triggered = false;
-                }
-            }
-            FreeTierLimitHitModalEvent::Close => {
-                self.current_workspace_state
-                    .is_free_tier_limit_hit_modal_open = false;
-                GeneralSettings::handle(ctx).update(ctx, |settings, ctx| {
-                    if let Err(e) = settings
-                        .free_tier_limit_hit_modal_dismissed
-                        .set_value(true, ctx)
-                    {
-                        log::warn!("Failed to mark free tier limit hit modal as dismissed: {e}");
-                    }
-                });
-                self.focus_active_tab(ctx);
-                ctx.notify();
-            }
-        }
-    }
+    // handle_free_tier_limit_modal_event removed (module deleted upstream)
 
-    pub fn check_and_open_free_tier_limit_modal(&mut self, ctx: &mut ViewContext<Self>) -> bool {
-        let is_free_tier = !UserWorkspaces::as_ref(ctx)
-            .current_workspace()
-            .is_some_and(|workspace| workspace.billing_metadata.is_user_on_paid_plan());
-
-        if !is_free_tier {
-            return false;
-        }
-
-        if AIRequestUsageModel::as_ref(ctx).has_any_ai_remaining(ctx) {
-            return false;
-        }
-
-        if self
-            .current_workspace_state
-            .is_free_tier_limit_hit_modal_open
-            || *GeneralSettings::as_ref(ctx).free_tier_limit_hit_modal_dismissed
-        {
-            return false;
-        }
-
-        self.current_workspace_state
-            .is_free_tier_limit_hit_modal_open = true;
-
-        send_telemetry_from_ctx!(TelemetryEvent::FreeTierLimitHitInterstitialDisplayed, ctx);
-
-        ctx.focus(&self.free_tier_limit_hit_modal);
-        ctx.notify();
-
-        true
+    pub fn check_and_open_free_tier_limit_modal(&mut self, _ctx: &mut ViewContext<Self>) -> bool {
+        // free_tier_limit_hit_modal removed upstream
+        false
     }
 
     fn ask_ai_assistant(&mut self, ask_type: &AskAIType, ctx: &mut ViewContext<Self>) {
@@ -15187,7 +15065,7 @@ impl Workspace {
     fn open_workflow_with_existing(
         &mut self,
         workflow_id: SyncId,
-        settings: &OpenWarpDriveObjectSettings,
+        settings: &ZapDriveObjectSettings,
         ctx: &mut ViewContext<Self>,
     ) {
         let source = WorkflowOpenSource::Existing(workflow_id);
@@ -15207,7 +15085,7 @@ impl Workspace {
         };
         self.open_workflow_in_pane(
             &source,
-            &OpenWarpDriveObjectSettings::default(),
+            &ZapDriveObjectSettings::default(),
             WorkflowViewMode::Create,
             ctx,
         );
@@ -15228,7 +15106,7 @@ impl Workspace {
         };
         self.open_workflow_in_pane(
             &source,
-            &OpenWarpDriveObjectSettings::default(),
+            &ZapDriveObjectSettings::default(),
             WorkflowViewMode::Create,
             ctx,
         );
@@ -15446,7 +15324,7 @@ impl Workspace {
                         .left_panel_views
                         .first()
                         .copied()
-                        .unwrap_or(ToolPanelView::WarpDrive)
+                        .unwrap_or(ToolPanelView::ZapDrive)
                     {
                         ToolPanelView::ProjectExplorer => {
                             crate::t!("workspace-left-panel-project-explorer")
@@ -15454,7 +15332,7 @@ impl Workspace {
                         ToolPanelView::GlobalSearch { .. } => {
                             crate::t!("workspace-left-panel-global-search")
                         }
-                        ToolPanelView::WarpDrive => crate::t!("workspace-left-panel-warp-drive"),
+                        ToolPanelView::ZapDrive => crate::t!("workspace-left-panel-warp-drive"),
                         ToolPanelView::ConversationListView => {
                             crate::t!("workspace-left-panel-agent-conversations")
                         }
@@ -15469,6 +15347,9 @@ impl Workspace {
                         }
                         ToolPanelView::VaultExplorer => {
                             crate::t!("workspace-left-panel-vault-explorer")
+                        }
+                        ToolPanelView::ServerFileBrowser => {
+                            crate::t!("workspace-left-panel-ssh-manager")
                         }
                     }
                 } else {
@@ -15518,7 +15399,7 @@ impl Workspace {
                 .left_panel_views
                 .first()
                 .copied()
-                .unwrap_or(ToolPanelView::WarpDrive)
+                .unwrap_or(ToolPanelView::ZapDrive)
             {
                 ToolPanelView::ProjectExplorer => {
                     crate::t!("workspace-left-panel-project-explorer")
@@ -15526,7 +15407,7 @@ impl Workspace {
                 ToolPanelView::GlobalSearch { .. } => {
                     crate::t!("workspace-left-panel-global-search")
                 }
-                ToolPanelView::WarpDrive => crate::t!("workspace-left-panel-warp-drive"),
+                ToolPanelView::ZapDrive => crate::t!("workspace-left-panel-warp-drive"),
                 ToolPanelView::ConversationListView => {
                     crate::t!("workspace-left-panel-agent-conversations")
                 }
@@ -15541,6 +15422,9 @@ impl Workspace {
                 }
                 ToolPanelView::VaultExplorer => {
                     crate::t!("workspace-left-panel-vault-explorer")
+                }
+                ToolPanelView::ServerFileBrowser => {
+                    crate::t!("workspace-left-panel-ssh-manager")
                 }
             }
         } else {
@@ -16016,7 +15900,7 @@ impl Workspace {
             .finish();
         } else {
             // Copy from our saved tab_bar_state to ensure all tabs get rendered with the same state
-            let active_tab_index = if FeatureFlag::AgentManagementView.is_enabled()
+            let active_tab_index = if false /* FeatureFlag::AgentManagementView removed upstream */
                 && self.current_workspace_state.is_agent_management_view_open
             {
                 None
@@ -16321,7 +16205,7 @@ impl Workspace {
         }
 
         if self.auth_state.is_anonymous_or_logged_out()
-            && !FeatureFlag::OpenWarpNewSettingsModes.is_enabled()
+            && true /* FeatureFlag::OpenWarpNewSettingsModes removed upstream */
         {
             if is_web_anonymous_user {
                 target.add_child(
@@ -18307,13 +18191,11 @@ impl Workspace {
         self.open_require_login_modal(AuthViewVariant::RequireLoginCloseable, ctx);
     }
 
-    fn focus_openwarp_launch_modal(&mut self, ctx: &mut ViewContext<Self>) {
-        ctx.focus(&self.openwarp_launch_modal);
+    fn focus_zap_launch_modal(&mut self, ctx: &mut ViewContext<Self>) {
+        ctx.focus(&self.zap_launch_modal);
     }
 
-    fn focus_build_plan_migration_modal(&mut self, ctx: &mut ViewContext<Self>) {
-        ctx.focus(&self.build_plan_migration_modal);
-    }
+    // focus_build_plan_migration_modal removed (module deleted upstream)
 
     fn open_left_panel_view(&mut self, action: &LeftPanelAction, ctx: &mut ViewContext<Self>) {
         if !self.active_tab_pane_group().as_ref(ctx).left_panel_open {
@@ -18373,7 +18255,7 @@ impl Workspace {
         // through workspace/view.rs, cloud_object/, and ~19 other files.
         // Original (pre-rebrand):
         //     if WarpDriveSettings::is_warp_drive_enabled(ctx) {
-        //         views.push(ToolPanelView::WarpDrive);
+        //         views.push(ToolPanelView::ZapDrive);
         //     }
         // openWarp 独有:SSH 管理器,无 feature flag,默认始终显示。
         views.push(ToolPanelView::SshManager);
@@ -18540,7 +18422,9 @@ impl TypedActionView for Workspace {
                     // (add_terminal_tab applies DefaultSessionMode::Agent internally).
                     DefaultSessionMode::Terminal
                     | DefaultSessionMode::Agent
-                    | DefaultSessionMode::CloudAgent => {
+                    | DefaultSessionMode::AmbientAgent
+                    // DefaultSessionMode::CloudAgent removed upstream
+                    => {
                         if FeatureFlag::WelcomeTab.is_enabled() {
                             self.add_welcome_tab(ctx);
                         } else {
@@ -18855,7 +18739,7 @@ impl TypedActionView for Workspace {
                             owner: personal_drive,
                             initial_folder_id: None,
                         },
-                        &OpenWarpDriveObjectSettings::default(),
+                        &ZapDriveObjectSettings::default(),
                         ctx,
                         true,
                     );
@@ -18917,7 +18801,7 @@ impl TypedActionView for Workspace {
                     };
                     self.open_workflow_in_pane(
                         &source,
-                        &OpenWarpDriveObjectSettings::default(),
+                        &ZapDriveObjectSettings::default(),
                         WorkflowViewMode::Create,
                         ctx,
                     );
@@ -18935,7 +18819,7 @@ impl TypedActionView for Workspace {
                     };
                     self.open_workflow_in_pane(
                         &source,
-                        &OpenWarpDriveObjectSettings::default(),
+                        &ZapDriveObjectSettings::default(),
                         WorkflowViewMode::Create,
                         ctx,
                     );
@@ -18978,7 +18862,7 @@ impl TypedActionView for Workspace {
             }
             OpenWarpDrive => {
                 if WarpDriveSettings::is_warp_drive_enabled(ctx) {
-                    self.open_left_panel_view(&LeftPanelAction::WarpDrive, ctx);
+                    self.open_left_panel_view(&LeftPanelAction::ZapDrive, ctx);
                 }
             }
             ToggleLeftPanel => {
@@ -19233,7 +19117,7 @@ impl TypedActionView for Workspace {
                 ctx.notify();
             }
             ToggleAgentManagementView => {}
-            ViewAgentRunsForEnvironment { environment_id: _ } => {}
+            // ViewAgentRunsForEnvironment { environment_id: _ } => {} // type removed upstream
             ClosePanel => {
                 if self.left_panel_view.is_self_or_child_focused(ctx) {
                     self.close_left_panel(ctx);
@@ -19456,7 +19340,7 @@ impl TypedActionView for Workspace {
                 });
                 self.open_workflow_with_existing(
                     *workflow_id,
-                    &OpenWarpDriveObjectSettings::default(),
+                    &ZapDriveObjectSettings::default(),
                     ctx,
                 );
             }
@@ -19738,7 +19622,7 @@ impl TypedActionView for Workspace {
             }
             OpenNotebook { id } => self.open_notebook(
                 &NotebookSource::Existing(*id),
-                &OpenWarpDriveObjectSettings::default(),
+                &ZapDriveObjectSettings::default(),
                 ctx,
                 true,
             ),
@@ -19888,7 +19772,7 @@ impl TypedActionView for Workspace {
                     };
                     self.open_workflow_in_pane(
                         &source,
-                        &OpenWarpDriveObjectSettings::default(),
+                        &ZapDriveObjectSettings::default(),
                         WorkflowViewMode::Create,
                         ctx,
                     );
@@ -19906,7 +19790,7 @@ impl TypedActionView for Workspace {
                     };
                     self.open_workflow_in_pane(
                         &source,
-                        &OpenWarpDriveObjectSettings::default(),
+                        &ZapDriveObjectSettings::default(),
                         WorkflowViewMode::Create,
                         ctx,
                     );
@@ -19920,30 +19804,7 @@ impl TypedActionView for Workspace {
             FileDeleted { path } => {
                 self.close_tabs_with_file_path(path, ctx);
             }
-            #[cfg(debug_assertions)]
-            OpenBuildPlanMigrationModal => {
-                // Force open the modal for debugging
-                OneTimeModalModel::handle(ctx).update(ctx, |model, ctx| {
-                    model.force_open_build_plan_migration_modal(ctx);
-                });
-                ctx.notify();
-            }
-            #[cfg(debug_assertions)]
-            ResetBuildPlanMigrationModalState => {
-                // Reset the dismissed state for debugging
-                let general_settings = GeneralSettings::handle(ctx);
-                general_settings.update(ctx, |settings, ctx| {
-                    if let Err(e) = settings
-                        .build_plan_migration_modal_dismissed
-                        .set_value(false, ctx)
-                    {
-                        log::warn!(
-                            "Failed to reset build plan migration modal dismissed setting: {e}"
-                        );
-                    }
-                });
-                log::info!("Build plan migration modal dismissed state has been reset");
-            }
+            // OpenBuildPlanMigrationModal and ResetBuildPlanMigrationModalState removed (module deleted upstream)
             #[cfg(debug_assertions)]
             DebugResetAwsBedrockLoginBannerDismissed => {
                 // Reset the AWS Bedrock login banner dismissed state for debugging
@@ -19960,35 +19821,35 @@ impl TypedActionView for Workspace {
                 log::info!("AWS Bedrock login banner dismissed state has been reset");
             }
             #[cfg(debug_assertions)]
-            OpenOpenWarpLaunchModal => {
+            OpenZapLaunchModal => {
                 // Force open the OpenWarp launch modal for debugging
                 OneTimeModalModel::handle(ctx).update(ctx, |model, ctx| {
-                    model.force_open_openwarp_launch_modal(ctx);
+                    model.force_open_zap_launch_modal(ctx);
                 });
                 ctx.notify();
             }
             #[cfg(debug_assertions)]
-            ResetOpenWarpLaunchModalState => {
+            ResetZapLaunchModalState => {
                 // Reset the OpenWarp launch modal dismissed state for debugging
                 let old_value = *GeneralSettings::as_ref(ctx)
-                    .did_check_to_trigger_openwarp_launch_modal
+                    .did_check_to_trigger_zap_launch_modal
                     .value();
                 GeneralSettings::handle(ctx).update(ctx, |settings, ctx| {
                     if let Err(e) = settings
-                        .did_check_to_trigger_openwarp_launch_modal
+                        .did_check_to_trigger_zap_launch_modal
                         .set_value(false, ctx)
                     {
                         log::warn!("Failed to reset OpenWarp launch modal dismissed setting: {e}");
                     }
                 });
                 let new_value = *GeneralSettings::as_ref(ctx)
-                    .did_check_to_trigger_openwarp_launch_modal
+                    .did_check_to_trigger_zap_launch_modal
                     .value();
                 log::info!(
                     "OpenWarp launch modal state: old={}, new={}, feature_flag_enabled={}",
                     old_value,
                     new_value,
-                    FeatureFlag::OpenWarpLaunchModal.is_enabled()
+                    FeatureFlag::ZapLaunchModal.is_enabled()
                 );
             }
             #[cfg(debug_assertions)]
@@ -20114,8 +19975,8 @@ impl TypedActionView for Workspace {
             ToggleWarpDrive => {
                 if WarpDriveSettings::is_warp_drive_enabled(ctx) {
                     let is_showing =
-                        self.left_panel_view.as_ref(ctx).active_view() == ToolPanelView::WarpDrive;
-                    self.toggle_left_panel_view(&LeftPanelAction::WarpDrive, is_showing, ctx);
+                        self.left_panel_view.as_ref(ctx).active_view() == ToolPanelView::ZapDrive;
+                    self.toggle_left_panel_view(&LeftPanelAction::ZapDrive, is_showing, ctx);
                 }
             }
             ToggleSshManager => {
@@ -21133,8 +20994,8 @@ impl View for Workspace {
         let one_time_modal_model = OneTimeModalModel::as_ref(app);
         let should_show_modal = one_time_modal_model.target_window_id() == Some(self.window_id);
 
-        if should_show_modal && one_time_modal_model.is_openwarp_launch_modal_open() {
-            stack.add_child(ChildView::new(&self.openwarp_launch_modal).finish());
+        if should_show_modal && one_time_modal_model.is_zap_launch_modal_open() {
+            stack.add_child(ChildView::new(&self.zap_launch_modal).finish());
         }
 
         if let Some(hoa_flow) = &self.hoa_onboarding_flow {
@@ -21253,19 +21114,11 @@ impl View for Workspace {
             }
         }
 
-        if should_show_modal && one_time_modal_model.is_build_plan_migration_modal_open() {
-            stack.add_child(ChildView::new(&self.build_plan_migration_modal).finish());
-        }
+        // build_plan_migration_modal removed upstream
+        // free_tier_limit_hit_modal removed upstream
 
         if self.current_workspace_state.is_codex_modal_open {
             stack.add_child(ChildView::new(&self.codex_modal).finish());
-        }
-
-        if self
-            .current_workspace_state
-            .is_free_tier_limit_hit_modal_open
-        {
-            stack.add_child(ChildView::new(&self.free_tier_limit_hit_modal).finish());
         }
 
         if let Some(lightbox_view) = &self.lightbox_view {

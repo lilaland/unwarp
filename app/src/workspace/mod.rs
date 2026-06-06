@@ -112,7 +112,7 @@ pub fn init(app: &mut AppContext) {
     crate::tab_configs::remove_confirmation_dialog::init(app);
     hoa_onboarding::init(app);
     tab_configs::session_config_modal::init(app);
-    view::zap_launch_modal::init(app);
+    // view::zap_launch_modal::init(app); // module removed upstream
     view::codex_modal::init(app);
     view::global_search::view::GlobalSearchView::init(app);
     view::right_panel::RightPanelView::init(app);

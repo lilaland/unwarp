@@ -7,7 +7,7 @@
 use super::{
     settings_page::{
         MatchData, PageType, SettingsPageEvent, SettingsPageMeta, SettingsPageViewHandle,
-        SettingsWidget, CONTENT_FONT_SIZE,
+        SettingsWidget,
     },
     SettingsSection,
 };
@@ -197,7 +197,7 @@ impl SettingsWidget for VaultSettingsWidget {
             let status = Text::new_inline(
                 result.clone(),
                 appearance.ui_font_family(),
-                CONTENT_FONT_SIZE,
+                13.,
             )
             .with_color(theme.sub_text_color(theme.background()).into())
             .finish();

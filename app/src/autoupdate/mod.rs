@@ -930,7 +930,7 @@ async fn download_update(
 
     cfg_if::cfg_if! {
         if #[cfg(target_os = "macos")] {
-            mac::download_update_and_cleanup(&version_info, &update_id, last_successful_update_id.as_deref(), http_client.as_ref(), on_progress).await
+            mac::download_update_and_cleanup(&version_info, &update_id, last_successful_update_id.as_deref(), http_client.as_ref()).await
         } else if #[cfg(target_os = "linux")] {
             linux::download_update_and_cleanup(&version_info, &update_id, http_client.as_ref(), on_progress).await
         } else if #[cfg(windows)] {
