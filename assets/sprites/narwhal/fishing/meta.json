@@ -1,0 +1,8 @@
+{
+  "pose": "fishing",
+  "state": "searching — grep, file lookup, web search, anything that hunts",
+  "canvas_size": 64,
+  "fps": 8,
+  "loop_mode": "forward",
+  "frames": []
+}

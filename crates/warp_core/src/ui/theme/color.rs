@@ -93,6 +93,11 @@ impl WarpTheme {
         self.accent
     }
 
+    /// Secondary accent color — Narwarp pink. Falls back to primary accent when not set.
+    pub fn accent_secondary(&self) -> Fill {
+        self.accent_secondary.unwrap_or(self.accent)
+    }
+
     pub fn foreground(&self) -> Fill {
         Fill::Solid(self.foreground)
     }

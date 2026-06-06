@@ -363,13 +363,13 @@ fn embed_resource_file(target_dir: &Path) {
     // `FileDescription` / `ProductName`(不是窗口标题),所以这里若回退默认 "Zap",
     // 直接 `cargo build` 出来的 dev 二进制在任务管理器里会显示成 `Zap(N)`。
     // 上游官方流水线在调用前会显式 `export WARP_APP_NAME=...` 覆盖,不受影响。
-    let app_name = env::var("WARP_APP_NAME").unwrap_or_else(|_| "Zap".to_owned());
+    let app_name = env::var("WARP_APP_NAME").unwrap_or_else(|_| "Narwarp".to_owned());
     let bin_name = env::var("CARGO_BIN_NAME").unwrap_or("oss".to_owned());
     // 以 `WARP_APP_PUBLISHER` 覆盖;默认与 installer / AUMID 一致为「Zap」。
     // 保持 installer `MyAppPublisher`、Cargo bundle metadata `copyright`、
     // 进程 AUMID `dev.zap.Zap` 三处全局对齐，避免 Windows Shell
     // 因 publisher / product name fingerprint 不一致而 miss 掉 icon cache。
-    let publisher = env::var("WARP_APP_PUBLISHER").unwrap_or_else(|_| "Zap".to_owned());
+    let publisher = env::var("WARP_APP_PUBLISHER").unwrap_or_else(|_| "Narwarp".to_owned());
     let (ver_major, ver_minor, ver_patch, ver_build) = parse_file_version_quad(&version);
 
     let icon_path = Path::new("channels")

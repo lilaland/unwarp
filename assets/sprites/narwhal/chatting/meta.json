@@ -1,0 +1,8 @@
+{
+  "pose": "chatting",
+  "state": "streaming a response to the user",
+  "canvas_size": 64,
+  "fps": 8,
+  "loop_mode": "forward",
+  "frames": []
+}

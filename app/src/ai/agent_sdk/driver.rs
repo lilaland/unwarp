@@ -72,6 +72,14 @@ pub(crate) mod terminal;
 
 use terminal::TerminalDriverEvent;
 
+/// Tusk's persona injected as the system prompt for local agent harness runs.
+const TUSK_SYSTEM_PROMPT: &str = "\
+You are Tusk, Narwarp's narwhal AI coding assistant. \
+You are warm, direct, and precise. You dive deep into problems and surface \
+with something concrete and useful. You never flatter, never pad, never moralize. \
+Help the developer ship great software.\
+";
+
 const MCP_SERVER_STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 const HARNESS_SAVE_INTERVAL: Duration = Duration::from_secs(30);
 pub(crate) const WARP_DRIVE_SYNC_TIMEOUT: Duration = Duration::from_secs(60);
@@ -1065,7 +1073,7 @@ impl AgentDriver {
             .flatten()?;
 
         let AgentRunPrompt::Local(prompt_text) = prompt;
-        let system_prompt: Option<String> = None;
+        let system_prompt: Option<String> = Some(TUSK_SYSTEM_PROMPT.to_owned());
         let resumption_prompt: Option<String> = None;
 
         // Prepare harness config files (onboarding, trust dialog, API-key approval, etc.).

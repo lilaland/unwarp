@@ -1,0 +1,8 @@
+{
+  "pose": "happy",
+  "state": "idle / default / success",
+  "canvas_size": 64,
+  "fps": 8,
+  "loop_mode": "forward",
+  "frames": []
+}

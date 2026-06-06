@@ -589,6 +589,9 @@ impl TerminalColors {
 pub struct WarpTheme {
     background: Fill,
     accent: Fill,
+    /// Secondary accent — Narwarp pink (#FFB3C1 ish). Falls back to primary accent when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    accent_secondary: Option<Fill>,
     #[serde(with = "hex_color")]
     foreground: ColorU,
 
@@ -620,6 +623,7 @@ impl WarpTheme {
             background: bg,
             foreground,
             accent,
+            accent_secondary: None,
             cursor,
             details: details.unwrap_or_else(|| Details::Custom(CustomDetails::default())),
             terminal_colors,

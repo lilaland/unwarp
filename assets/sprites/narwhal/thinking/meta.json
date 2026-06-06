@@ -1,0 +1,8 @@
+{
+  "pose": "thinking",
+  "state": "agent is reasoning (no tool call in flight)",
+  "canvas_size": 64,
+  "fps": 8,
+  "loop_mode": "forward",
+  "frames": []
+}
