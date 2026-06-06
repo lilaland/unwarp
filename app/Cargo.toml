@@ -845,9 +845,9 @@ configurable_context_window = []
 
 [package.metadata.bundle.bin.unwarp]
 category = "public.app-category.developer-tools"
-copyright = "© 2025-2026, unwarp"
-identifier = "dev.unwarp.unwarp"
-name = "unwarp"
+copyright = "© 2025-2026, Narwarp"
+identifier = "dev.unwarp.narwarp"
+name = "Narwarp"
 resources = ["assets/onboarding"]
 icon = ["channels/oss/icon/no-padding/512x512.png", "channels/oss/icon/no-padding/icon.ico"]
 short_description = "Local-first terminal with Obsidian-backed RAG and Claude Code integration."
